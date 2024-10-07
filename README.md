@@ -25,6 +25,13 @@ conda activate UnifiedDSI
 pip install -r requirements.txt
 ```
 
+Add excluded folders.
+```bash
+mkdir data
+mkdir ex
+mkdir results
+```
+
 ## Run
 
 1. Set *working directory* to /UnifiedDSI (project root)
