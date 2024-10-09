@@ -27,3 +27,4 @@ cd ../..
 mkdir data/multiwoz24
 mv data/MultiWOZ2.4-main/data/mwz2.4 data/multiwoz24/original
 mv data/MultiWOZ2.4-main data/multiwoz24/MultiWOZ2.4
+
