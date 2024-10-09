@@ -1,6 +1,6 @@
 
 
-# load raw version of data
+# load raw version of data under /data/multiwoz24/original
 
 # create a DSTData object with all the correct linking
 
