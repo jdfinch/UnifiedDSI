@@ -1,40 +1,29 @@
 
 #!/bin/bash
 
+# This downloads, preprocesses, and organizes the multiwoz data under /data/multiwoz24/original
+
 # URL to the raw file on GitHub
-url="https://github.com/smartyfh/MultiWOZ2.4/raw/main/data/MULTIWOZ2.4.zip"
-output_file="MULTIWOZ2.4.zip"
-output_dir="data/multiwoz24"
+url="https://github.com/smartyfh/MultiWOZ2.4/archive/refs/heads/main.zip"
+output_file="data/MULTIWOZ2.4.zip"
 
 # Create the output directory if it doesn't exist
 mkdir -p $output_dir
 
 # Download the zip file
-echo "Downloading $output_file..."
 curl -L $url -o $output_file
 
-# Check if the download was successful
-if [ $? -eq 0 ]; then
-    echo "Download successful."
+# Unzip
+unzip $output_file -d "data"
 
-    # Unzip the file into the specified directory
-    echo "Unzipping $output_file to $output_dir..."
-    unzip $output_file -d $output_dir
+rm "data/MULTIWOZ2.4.zip"
 
-    # Check if unzip was successful
-    if [ $? -eq 0 ]; then
-        echo "Unzipping successful."
+cd data/MultiWOZ2.4-main
 
-        # Clean up: remove the zip file
-        echo "Cleaning up: deleting $output_file..."
-        rm $output_file
+python create_data.py
 
-        echo "Cleanup complete."
-    else
-        echo "Failed to unzip the file."
-    fi
-else
-    echo "Failed to download the file."
-fi
+cd ../..
 
-
+mkdir data/multiwoz24
+mv data/MultiWOZ2.4-main/data/mwz2.4 data/multiwoz24/original
+mv data/MultiWOZ2.4-main data/multiwoz24/MultiWOZ2.4
