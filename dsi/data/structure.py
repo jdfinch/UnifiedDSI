@@ -98,11 +98,14 @@ class DSTData:
         slot_value_header = [field.name for field in dc.fields(SlotValue)]
 
         turns = [dc.asdict(turn) for turn in self.turns.values()]
-        dialogues = ...
-        slots = ...
-        slot_values = ...
+        dialogues = [dc.asdict(dia) for dia in self.dialogues.values()]
+        slots = [dc.asdict(slot) for slot in self.slots.values()]
+        slot_values = [dc.asdict(sv) for sv in self.slot_values.values()]
 
         turn_table = [turns_header, *turns]
+        dialogue_table = [dialogue_header, *dialogues]
+        slots_table = [slot_header, *slots]
+        slot_value_table = [slot_value_header, *slot_values]
 
 
         ez.TSPy.save(turns, pl.Path(self.path) / 'turns.tspy')
