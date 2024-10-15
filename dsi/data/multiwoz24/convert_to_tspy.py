@@ -24,42 +24,43 @@ def convert_mwoz_to_tspy(data_path):
     for source_split in ('train', 'dev', 'test'):
         source_path = pl.Path(data_path) / 'original' / f"{source_split}_dials.json"
         split = split_name_map.get(source_split, source_split)
-        target_path = pl.Path(data_path) / f"{source_split}.tspy"
+        target_path = pl.Path(data_path) / f"{source_split}.tspy" # what we want to save it to
 
         data = ds.DSTData(f"{data_path}/{split}")
 
         source_dials = ez.File(source_path).load()
         for source_dial in source_dials:
             dialogue_idx = source_dial['dialogue_idx']
-            domains = source_dial['domains']
 
-            dialogue_obj = ds.Dialogue(dialogue_idx)
+            dialogue_obj = ds.Dialogue(
+                Dialogue=dialogue_idx,)
+
+            data.dialogues[dialogue_obj.id] = dialogue_obj
 
             # Extract the dialogue turns
             dialogue = source_dial['dialogue']
             for turn in dialogue:
                 turn_idx = turn['turn_idx']
-                system_transcript = turn['system_transcript']
-                transcript = turn['transcript']
+                system_transcript = turn['system_transcript'] # bot turn
+                transcript = turn['transcript'] # human turn
                 belief_state = turn['belief_state']
-                turn_label = turn.get('turn_label', [])
-                system_acts = turn.get('system_acts', [])
-                domain = turn['domain']
 
                 bot_turn_obj = ds.Turn(
                     text=system_transcript,
                     speaker='bot',
                     dialogue_id=dialogue_idx,
-                    index=turn_idx,)
+                    index=0,)
                 user_turn_obj = ds.Turn(
                     text=transcript,
                     speaker='user',
                     dialogue_id=dialogue_idx,
-                    index=turn_idx,)
+                    index=1,)
+
+                data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
+                data.turns[(user_turn_obj.dialogue_id, user_turn_obj.index)] = user_turn_obj
 
                 # Process belief state
                 for belief in belief_state:
-                    act = belief['act']
                     slots = belief['slots']
                     for slot in slots:
                         slot_name = slot[0]
@@ -72,6 +73,7 @@ def convert_mwoz_to_tspy(data_path):
                                 description='',
                                 domain=slot_domain,)
                             slot_schema[slot_name] = slot_obj
+                            data.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
 
                         slot_value_obj = ds.SlotValue(
                             turn_dialogue_id=dialogue_obj.id,
@@ -79,12 +81,7 @@ def convert_mwoz_to_tspy(data_path):
                             slot_name=slot_name,
                             slot_domain=slot_domain,
                             value=slot_value,)
-                        data.slot_values[(
-                            slot_value_obj.turn_dialogue_id,
-                            slot_value_obj.turn_index,
-                            slot_value_obj.slot_domain,
-                            slot_value_obj.slot_name
-                        )] = slot_value_obj
+                        data.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
 
                 # Process turn labels
                 # for label in turn_label:
