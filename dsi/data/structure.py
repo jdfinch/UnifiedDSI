@@ -79,8 +79,51 @@ class DSTData:
         ... # given these these tables, convert into the actual objects and link up all the refs
         ... # This is the deserialization / loading part
 
-        sv = ...
-        sv.turn = self.turns[sv.dialogue_id, sv.turn_index]
+            self.dialogues = {}
+            self.turns = {}
+            self.slots = {}
+            self.slot_values = {}
+
+            for data in dialogue_table:
+                dialogue_object = Dialogue(id=data['id'])
+                self.dialogues[dialogue_object.id] = dialogue_object
+
+            for turn in turn_table:
+                turn_obj = Turn(
+                    text=turn['text'],
+                    speaker=turn['speaker'],
+                    dialogue_id=turn['dialogue_id'],
+                    index=turn['index'],
+                )
+                self.turns[(turn_obj.dialogue_id, turn_obj.index)] = turn_obj
+                self.dialogues[turn_obj.dialogue_id].turns.append(turn_obj)
+
+            for slot in slot_table:
+                slot_obj = Slot(
+                    name=slot['name'],
+                    description=slot['description'],
+                    domain=slot['domain'],
+                )
+                self.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
+
+            for slot_value in slot_value_table:
+                slot_value_obj = SlotValue(
+                    turn_dialogue_id=slot_value['turn_dialogue_id'],
+                    turn_index=slot_value['turn_index'],
+                    slot_name=slot_value['slot_name'],
+                    slot_domain=slot_value['slot_domain'],
+                    value=slot_value['value'],
+                )
+                self.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
+
+                # Link slot value to turn
+                slot_value_obj.turn = self.turns[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index)]
+
+                # Link slot value to slot
+                slot_value_obj.slot = self.slots[(slot_value_obj.slot_name, slot_value_obj.slot_domain)]
+
+                # Add slot value to turn's slot_values list
+                slot_value_obj.turn.slot_values.append(slot_value_obj)
 
     
     def save(self):

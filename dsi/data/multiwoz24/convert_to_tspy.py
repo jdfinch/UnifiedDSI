@@ -8,10 +8,9 @@ call DSTData.save() to save the data to a new location
 
 """
 
+
 import dsi.data.structure as ds
-
 import ezpyzy as ez
-
 import pathlib as pl
 
 
