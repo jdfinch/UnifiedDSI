@@ -71,18 +71,17 @@ class DSTData:
     slot_values: dict[tuple[str, int, str, str], SlotValue] = None # (dialogue_id, turn_index, domain, slot_name)
     
     def __post_init__(self):
+        self.dialogues = {}
+        self.turns = {}
+        self.slots = {}
+        self.slot_values = {}
         if self.path is not None:
             turn_table = ez.TSPy.load(pl.Path(self.path) / 'turns.tspy')
             dialogue_table = ez.TSPy.load(pl.Path(self.path) / 'dialogues.tspy')
             slot_table = ez.TSPy.load(pl.Path(self.path) / 'slots.tspy')
             slot_value_table = ez.TSPy.load(pl.Path(self.path) / 'slot_values.tspy')
-        ... # given these these tables, convert into the actual objects and link up all the refs
-        ... # This is the deserialization / loading part
-
-            self.dialogues = {}
-            self.turns = {}
-            self.slots = {}
-            self.slot_values = {}
+            ... # given these these tables, convert into the actual objects and link up all the refs
+            ... # This is the deserialization / loading part
 
             for data in dialogue_table:
                 dialogue_object = Dialogue(id=data['id'])
@@ -126,8 +125,8 @@ class DSTData:
                 slot_value_obj.turn.slot_values.append(slot_value_obj)
 
     
-    def save(self):
-        
+    def save(self, path:str|pl.Path = None):
+
         """
         Create a list of lists for each table
         Cell values all need to be python literals
@@ -135,15 +134,18 @@ class DSTData:
         this is serialization step
         """
 
+        if path is not None:
+            self.path = path
+
         turns_header = [field.name for field in dc.fields(Turn)]
         dialogue_header = [field.name for field in dc.fields(Dialogue)]
         slot_header = [field.name for field in dc.fields(Slot)]
         slot_value_header = [field.name for field in dc.fields(SlotValue)]
 
-        turns = [dc.asdict(turn) for turn in self.turns.values()]
-        dialogues = [dc.asdict(dia) for dia in self.dialogues.values()]
-        slots = [dc.asdict(slot) for slot in self.slots.values()]
-        slot_values = [dc.asdict(sv) for sv in self.slot_values.values()]
+        turns = [list(dc.asdict(turn).values()) for turn in self.turns.values()]
+        dialogues = [list(dc.asdict(dialogue).values()) for dialogue in self.dialogues.values()]
+        slots = [list(dc.asdict(slot).values()) for slot in self.slots.values()]
+        slot_values = [list(dc.asdict(slot_value).values()) for slot_value in self.slot_values.values()]
 
         turn_table = [turns_header, *turns]
         dialogue_table = [dialogue_header, *dialogues]
@@ -151,10 +153,13 @@ class DSTData:
         slot_value_table = [slot_value_header, *slot_values]
 
 
-        ez.TSPy.save(turns, pl.Path(self.path) / 'turns.tspy')
-        ez.TSPy.save(dialogues, pl.Path(self.path) / 'dialogues.tspy')
-        ez.TSPy.save(slots, pl.Path(self.path) / 'slots.tspy')
-        ez.TSPy.save(slot_values, pl.Path(self.path) / 'slot_values.tspy')
+        ez.TSPy.save(turn_table, pl.Path(self.path) / 'turns.tspy')
+        ez.TSPy.save(dialogue_table, pl.Path(self.path) / 'dialogues.tspy')
+        ez.TSPy.save(slots_table, pl.Path(self.path) / 'slots.tspy')
+        ez.TSPy.save(slot_value_table, pl.Path(self.path) / 'slot_values.tspy')
+
+
+
 
 
 

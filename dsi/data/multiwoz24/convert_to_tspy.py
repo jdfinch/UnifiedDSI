@@ -25,7 +25,7 @@ def convert_mwoz_to_tspy(data_path):
         split = split_name_map.get(source_split, source_split)
         target_path = pl.Path(data_path) / f"{source_split}.tspy" # what we want to save it to
 
-        data = ds.DSTData(f"{data_path}/{split}")
+        data = ds.DSTData()
 
         source_dials = ez.File(source_path).load()
         for source_dial in source_dials:
@@ -101,7 +101,7 @@ def convert_mwoz_to_tspy(data_path):
 
             break
 
-    data.save()
+    data.save(f"{data_path}/{split}")
 
 
 if __name__ == '__main__':
