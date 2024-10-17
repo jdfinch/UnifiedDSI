@@ -101,7 +101,7 @@ def convert_mwoz_to_tspy(data_path):
 
             break
 
-    data.save(f"{data_path}/{split}")
+        data.save(f"{data_path}/{split}")
 
 
 if __name__ == '__main__':
