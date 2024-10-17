@@ -31,8 +31,7 @@ def convert_mwoz_to_tspy(data_path):
         for source_dial in source_dials:
             dialogue_idx = source_dial['dialogue_idx']
 
-            dialogue_obj = ds.Dialogue(
-                Dialogue=dialogue_idx,)
+            dialogue_obj = ds.Dialogue(id=dialogue_idx)
 
             data.dialogues[dialogue_obj.id] = dialogue_obj
 
@@ -99,6 +98,7 @@ def convert_mwoz_to_tspy(data_path):
                 #     else:
                 #         # Handle cases where system_act may not be a list (if any)
                 #         print(f"Turn {turn_idx} - System act: {system_act}")
+
             break
 
     data.save()

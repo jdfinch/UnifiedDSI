@@ -17,7 +17,7 @@ class Turn:
 
     @property
     def domains(self):
-        return [sv.slot_domain for sv in self.slot_values]
+        return {sv.slot_domain for sv in self.slot_values}
 
 
 @dc.dataclass
@@ -29,7 +29,7 @@ class Dialogue:
 
     @property
     def domains(self):
-        return [d for t in self.turns for d in t.domains]
+        return {d for t in self.turns for d in t.domains}
 
     @property
     def speakers(self):
