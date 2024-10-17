@@ -23,7 +23,6 @@ def convert_mwoz_to_tspy(data_path):
     for source_split in ('train', 'dev', 'test'):
         source_path = pl.Path(data_path) / 'original' / f"{source_split}_dials.json"
         split = split_name_map.get(source_split, source_split)
-        target_path = pl.Path(data_path) / f"{source_split}.tspy" # what we want to save it to
 
         data = ds.DSTData()
 

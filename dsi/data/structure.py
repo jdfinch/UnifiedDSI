@@ -76,10 +76,10 @@ class DSTData:
         self.slots = {}
         self.slot_values = {}
         if self.path is not None:
-            turn_table = ez.TSPy.load(pl.Path(self.path) / 'turns.tspy')
-            dialogue_table = ez.TSPy.load(pl.Path(self.path) / 'dialogues.tspy')
-            slot_table = ez.TSPy.load(pl.Path(self.path) / 'slots.tspy')
-            slot_value_table = ez.TSPy.load(pl.Path(self.path) / 'slot_values.tspy')
+            turn_table = ez.File(pl.Path(self.path) / 'turns.tsv').load(format=ez.TSPy)
+            dialogue_table = ez.File(pl.Path(self.path) / 'dialogues.tsv').load(format=ez.TSPy)
+            slot_table = ez.File(pl.Path(self.path) / 'slots.tsv').load(format=ez.TSPy)
+            slot_value_table = ez.File(pl.Path(self.path) / 'slot_values.tsv').load(format=ez.TSPy)
             ... # given these these tables, convert into the actual objects and link up all the refs
             ... # This is the deserialization / loading part
 
@@ -152,12 +152,15 @@ class DSTData:
         slots_table = [slot_header, *slots]
         slot_value_table = [slot_value_header, *slot_values]
 
+        ez.File(pl.Path(self.path) / 'turns.tsv').save(turn_table, format=ez.TSPy)
+        ez.File(pl.Path(self.path) / 'dialogues.tsv').save(dialogue_table, format=ez.TSPy)
+        ez.File(pl.Path(self.path) / 'slots.tsv').save(slots_table, format=ez.TSPy)
+        ez.File(pl.Path(self.path) / 'slot_values.tsv').save(slot_value_table, format=ez.TSPy)
 
-        ez.TSPy.save(turn_table, pl.Path(self.path) / 'turns.tspy')
-        ez.TSPy.save(dialogue_table, pl.Path(self.path) / 'dialogues.tspy')
-        ez.TSPy.save(slots_table, pl.Path(self.path) / 'slots.tspy')
-        ez.TSPy.save(slot_value_table, pl.Path(self.path) / 'slot_values.tspy')
 
+if __name__ == '__main__':
+
+    data = DSTData('data/multiwoz24/valid')
 
 
 
