@@ -36,25 +36,30 @@ def convert_mwoz_to_tspy(data_path):
 
             # Extract the dialogue turns
             dialogue = source_dial['dialogue']
+
+            temp = 0
             for turn in dialogue:
                 turn_idx = turn['turn_idx']
                 system_transcript = turn['system_transcript'] # bot turn
-                transcript = turn['transcript'] # human turn
+                transcript = turn.get('transcript', "") # human turn
                 belief_state = turn['belief_state']
 
-                bot_turn_obj = ds.Turn(
-                    text=system_transcript,
-                    speaker='bot',
-                    dialogue_id=dialogue_idx,
-                    index=0,)
+                if not(temp == 0 and system_transcript == ""):
+                    bot_turn_obj = ds.Turn(
+                        text=system_transcript,
+                        speaker='bot',
+                        dialogue_id=dialogue_idx,
+                        index=temp, )
+                    data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
+                    temp += 1
+
                 user_turn_obj = ds.Turn(
                     text=transcript,
                     speaker='user',
                     dialogue_id=dialogue_idx,
-                    index=1,)
-
-                data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
+                    index=temp, )
                 data.turns[(user_turn_obj.dialogue_id, user_turn_obj.index)] = user_turn_obj
+                temp += 1
 
                 # Process belief state
                 for belief in belief_state:
@@ -98,7 +103,6 @@ def convert_mwoz_to_tspy(data_path):
                 #         # Handle cases where system_act may not be a list (if any)
                 #         print(f"Turn {turn_idx} - System act: {system_act}")
 
-            break
 
         data.save(f"{data_path}/{split}")
 
