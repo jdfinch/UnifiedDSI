@@ -13,14 +13,17 @@ def convert_sgd_to_tspy(data_path):
         split = split_name_map.get(source_split, source_split)
         json_files = sorted(source_path.glob('*.json'))
 
+        data = ds.DSTData()
+
         for json_file in json_files:
             source_dials = ez.File(json_file).load()  # each one of these are their own dialogue
 
-            data = ds.DSTData()
+
 
             for source_dial in source_dials:
-                dialogue_idx = source_dial.get('dialogue_id', None)
-                if(dialogue_idx is None):
+                dialogue_idx = str(source_dial.get('dialogue_id', None))
+
+                if dialogue_idx == "None":
                     continue
 
                 dialogue_obj = ds.Dialogue(id=dialogue_idx)
@@ -37,6 +40,7 @@ def convert_sgd_to_tspy(data_path):
                             dialogue_id=dialogue_idx,
                             index=counter, )
                         data.turns[(user_turn_obj.dialogue_id, user_turn_obj.index)] = user_turn_obj
+                        print(user_turn_obj.text)
                     else:
                         bot_turn_obj = ds.Turn(
                             text=utterance,
@@ -44,6 +48,7 @@ def convert_sgd_to_tspy(data_path):
                             dialogue_id=dialogue_idx,
                             index=counter, )
                         data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
+                        print(bot_turn_obj.text)
 
                     for frame in turn.get('frames', []):
                         service = frame.get('service', 'N/A')  # Slot domain
@@ -73,8 +78,8 @@ def convert_sgd_to_tspy(data_path):
                             data.slot_values[(
                                 slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain,
                                 slot_value_obj.slot_name)] = slot_value_obj
-                    counter += 1
 
+                    counter += 1
             # Save the data after processing all files in a split
             data.save(f"{data_path}/{split}")
 
