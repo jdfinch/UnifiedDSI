@@ -1,14 +1,3 @@
-
-"""
-load raw version of data under /data/multiwoz24/original
-
-create a DSTData object with all the correct linking
-
-call DSTData.save() to save the data to a new location
-
-"""
-
-
 import dsi.data.structure as ds
 import ezpyzy as ez
 import pathlib as pl
@@ -25,13 +14,23 @@ def convert_sgd_to_tspy(data_path):
         json_files = sorted(source_path.glob('*.json'))
 
         for json_file in json_files:
-            print(source_path, json_file)
+            source_dials = ez.File(json_file).load()  # each one of these are their own dialogue
 
-        #print(f"{output_path}/{split}")
-        data = ds.DSTData(f"{data_path}/{split}") # This is the line that causes problems with Ezypzy
+            data = ds.DSTData()
 
+            for source_dial in source_dials:
+                dialogue_idx = str(source_dial.get('dialogue_id', None))
 
+                if dialogue_idx == "None":
+                    continue
 
+                dialogue_obj = ds.Dialogue(id=dialogue_idx)
+                print(dialogue_obj.id)
+
+                data.dialogues[dialogue_obj.id] = dialogue_obj
+
+            # Save the data after processing all files in a split
+            data.save(f"{data_path}/{split}")
 
 if __name__ == '__main__':
     convert_sgd_to_tspy('data/dstc8')
