@@ -7,8 +7,8 @@ git clone https://github.com/jdfinch/language_model.git
 cd language_model && git checkout UnifiedDSI && cd ..
 cd ..
 
-ln -s $(realpath subgit/ezpyzy/ezpyzy) $(realpath src/ezpyzy)
-ln -s $(realpath subgit/language_model/language_model) $(realpath src/language_model)
+ln -s ../subgit/ezpyzy/ezpyzy $(realpath src/ezpyzy)
+ln -s ../subgit/langauge_model/language_model $(realpath src/language_model)
 
 conda create -n UnifiedDSI python=3.11
 conda activate UnifiedDSI
