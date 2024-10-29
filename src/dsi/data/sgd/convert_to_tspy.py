@@ -1,12 +1,28 @@
 import dsi.data.structure as ds
 import ezpyzy as ez
 import pathlib as pl
+import json
 
 split_name_map = dict(dev='valid')
 
-def convert_sgd_to_tspy(data_path):
-    slot_scheme = {}
+def slot_creation(data_path, split):
+    slots_list = []
+    source_path = pl.Path(data_path) / 'original' / f"{split}" / 'schema.json'
+    if source_path.exists():
 
+        with open(source_path, 'r') as file:
+            services = json.load(file)
+            for service in services:
+                domain = service['service_name']
+                for slot_info in service.get('slots', []):
+                    # Create a Slot instance
+                    slot = ds.Slot(name=slot_info['name'], description=slot_info['description'], domain=domain)
+                    slots_list.append(slot)
+    return slots_list
+
+
+
+def convert_sgd_to_tspy(data_path):
     for source_split in ('train', 'test', 'dev'):
         source_path = pl.Path(data_path) / 'original' / f"{source_split}"
         output_path = pl.Path(data_path) / 'original'
@@ -15,10 +31,16 @@ def convert_sgd_to_tspy(data_path):
 
         data = ds.DSTData()
 
+        # Creating all slots
+        slot_list = slot_creation(data_path, source_split)
+        print(slot_list)
+        for slot_obj in slot_list:
+            data.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
+
+        print(data.slots)
+
         for json_file in json_files:
             source_dials = ez.File(json_file).load()  # each one of these are their own dialogue
-
-
 
             for source_dial in source_dials:
                 dialogue_idx = str(source_dial.get('dialogue_id', None))
@@ -54,15 +76,11 @@ def convert_sgd_to_tspy(data_path):
                         service = frame.get('service', 'N/A')  # Slot domain
                         for action in frame.get('actions', []):
                             slot_name = action.get('slot', 'N/A')  # Slot name
+                            if(slot_name == 'intent' or slot_name == '' or slot_name == 'count'):
+                                continue
                             description = action.get('canonical_values', 'N/A')  # Description
 
-                            if slot_name not in slot_scheme:
-                                slot_obj = ds.Slot(
-                                    name=slot_name,
-                                    description=description,
-                                    domain=service, )
-                                slot_scheme[slot_name] = slot_obj
-                                data.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
+                            temp_slot = data.slots[(slot_name, service)]
 
                             slot_value = frame.get('state', {}).get('slot_values', {}).get(slot_name, None)
                             if slot_value is None:
@@ -71,8 +89,8 @@ def convert_sgd_to_tspy(data_path):
                             slot_value_obj = ds.SlotValue(
                                 turn_dialogue_id=dialogue_obj.id,
                                 turn_index=user_turn_obj.index if speaker == "USER" else bot_turn_obj.index,
-                                slot_name=slot_name,
-                                slot_domain=slot_obj.domain,
+                                slot_name=temp_slot.name,
+                                slot_domain=temp_slot.domain,
                                 value=slot_value, )
 
                             data.slot_values[(
@@ -81,7 +99,7 @@ def convert_sgd_to_tspy(data_path):
 
                     counter += 1
             # Save the data after processing all files in a split
-            # data.save(f"{data_path}/{split}")
+            data.save(f"{data_path}/{split}")
 
 if __name__ == '__main__':
     convert_sgd_to_tspy('data/sgd')

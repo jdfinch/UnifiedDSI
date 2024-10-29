@@ -77,7 +77,7 @@ def convert_mwoz_to_tspy(data_path):
                                 description='',
                                 domain=slot_domain,)
                             slot_schema[slot_name] = slot_obj
-                            data.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
+
 
                         slot_value_obj = ds.SlotValue(
                             turn_dialogue_id=dialogue_obj.id,
@@ -107,7 +107,12 @@ def convert_mwoz_to_tspy(data_path):
 
 
     for split in ('train', 'valid', 'test'):
-        # add the slot schema to the data
+        for key, value in slot_schema.items():
+            data.slots[(value.name, value.domain)] = value
+
+
+
+
         data.save(f"{data_path}/{split}")
 
 

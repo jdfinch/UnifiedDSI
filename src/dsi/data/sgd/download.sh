@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# This downloads, preprocesses, and organizes the DSTC8 Schema-Guided Dialogue dataset under /data/dstc8/original
+# This downloads, preprocesses, and organizes the DSTC8 Schema-Guided Dialogue dataset under /data/sgd/original
 
 # URL to the raw file on GitHub
 url="https://github.com/google-research-datasets/dstc8-schema-guided-dialogue/archive/refs/heads/master.zip"
@@ -19,7 +19,7 @@ unzip $output_file -d "data"
 rm $output_file
 
 # Navigate into the unzipped directory
-cd data/dstc8-schema-guided-dialogue-master
+cd data/sgd-schema-guided-dialogue-master
 
 # If there's a preprocessing script, you can run it here
 # For example:
@@ -29,15 +29,15 @@ cd data/dstc8-schema-guided-dialogue-master
 cd ../..
 
 # Create a new directory to organize the dataset
-mkdir -p data/dstc8/original
-mkdir -p data/dstc8/SGD
+mkdir -p data/sgd/original
+mkdir -p data/sgd/SGD
 
 # Move the dataset to the new directory
-mv data/dstc8-schema-guided-dialogue-master/dev data/dstc8/original
-mv data/dstc8-schema-guided-dialogue-master/test data/dstc8/original
-mv data/dstc8-schema-guided-dialogue-master/train data/dstc8/original
+mv data/sgd-schema-guided-dialogue-master/dev data/sgd/original
+mv data/sgd-schema-guided-dialogue-master/test data/sgd/original
+mv data/sgd-schema-guided-dialogue-master/train data/sgd/original
 
 # Optionally, move the entire unzipped directory for reference
-mv data/dstc8-schema-guided-dialogue-master data/dstc8/SGD
+mv data/sgd-schema-guided-dialogue-master data/sgd/SGD
 
-mv data/dstc8 data/sgd
+mv data/sgd data/sgd
