@@ -39,3 +39,5 @@ mv data/dstc8-schema-guided-dialogue-master/train data/dstc8/original
 
 # Optionally, move the entire unzipped directory for reference
 mv data/dstc8-schema-guided-dialogue-master data/dstc8/SGD
+
+mv data/dstc8 data/sgd

@@ -19,6 +19,9 @@ class Turn:
     def domains(self):
         return {sv.slot_domain for sv in self.slot_values}
 
+    def state(self):
+        ... # applies all the updates in sequence from the history
+
 
 @dc.dataclass
 class Dialogue:

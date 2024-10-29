@@ -40,7 +40,7 @@ def convert_sgd_to_tspy(data_path):
                             dialogue_id=dialogue_idx,
                             index=counter, )
                         data.turns[(user_turn_obj.dialogue_id, user_turn_obj.index)] = user_turn_obj
-                        print(user_turn_obj.text)
+                        # print(user_turn_obj.text)
                     else:
                         bot_turn_obj = ds.Turn(
                             text=utterance,
@@ -48,7 +48,7 @@ def convert_sgd_to_tspy(data_path):
                             dialogue_id=dialogue_idx,
                             index=counter, )
                         data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
-                        print(bot_turn_obj.text)
+                        # print(bot_turn_obj.text)
 
                     for frame in turn.get('frames', []):
                         service = frame.get('service', 'N/A')  # Slot domain
@@ -81,7 +81,7 @@ def convert_sgd_to_tspy(data_path):
 
                     counter += 1
             # Save the data after processing all files in a split
-            data.save(f"{data_path}/{split}")
+            # data.save(f"{data_path}/{split}")
 
 if __name__ == '__main__':
-    convert_sgd_to_tspy('data/dstc8')
+    convert_sgd_to_tspy('data/sgd')

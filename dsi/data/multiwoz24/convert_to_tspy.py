@@ -37,6 +37,8 @@ def convert_mwoz_to_tspy(data_path):
             # Extract the dialogue turns
             dialogue = source_dial['dialogue']
 
+            previous_state = {}
+
             temp = 0
             for turn in dialogue:
                 turn_idx = turn['turn_idx']
@@ -104,6 +106,8 @@ def convert_mwoz_to_tspy(data_path):
                 #         print(f"Turn {turn_idx} - System act: {system_act}")
 
 
+    for split in ('train', 'valid', 'test'):
+        # add the slot schema to the data
         data.save(f"{data_path}/{split}")
 
 
