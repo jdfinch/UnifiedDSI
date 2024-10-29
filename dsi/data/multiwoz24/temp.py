@@ -84,4 +84,4 @@ def convert_sgd_to_tspy(data_path):
             data.save(f"{data_path}/{split}")
 
 if __name__ == '__main__':
-    convert_sgd_to_tspy('data/dstc8')
+    convert_sgd_to_tspy('data/sgd')
