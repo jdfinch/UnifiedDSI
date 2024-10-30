@@ -78,11 +78,10 @@ def convert_sgd_to_tspy(data_path):
                             slot_name = action.get('slot', 'N/A')  # Slot name
                             if(slot_name == 'intent' or slot_name == '' or slot_name == 'count'):
                                 continue
-                            description = action.get('canonical_values', 'N/A')  # Description
 
                             temp_slot = data.slots[(slot_name, service)]
 
-                            slot_value = frame.get('state', {}).get('slot_values', {}).get(slot_name, None)
+                            slot_value = action.get('canonical_values', 'N/A')
                             if slot_value is None:
                                 continue  # Skip if slot_value is missing
 
@@ -92,7 +91,7 @@ def convert_sgd_to_tspy(data_path):
                                 slot_name=temp_slot.name,
                                 slot_domain=temp_slot.domain,
                                 value=slot_value, )
-
+                            print(slot_value_obj)
                             data.slot_values[(
                                 slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain,
                                 slot_value_obj.slot_name)] = slot_value_obj

@@ -87,25 +87,6 @@ def convert_mwoz_to_tspy(data_path):
                             value=slot_value,)
                         data.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
 
-                # Process turn labels
-                # for label in turn_label:
-                #     label_slot = label[0]
-                #     label_value = label[1]
-                #     # Process the turn label (e.g., storing or printing)
-                #     print(f"Turn {turn_idx} - Turn label - Slot: {label_slot} = {label_value}")
-
-                # Process system acts if any
-                # for system_act in system_acts:
-                #     if isinstance(system_act, list):
-                #         act_name = system_act[0]
-                #         act_value = system_act[1]
-                #         # Process the system act (e.g., storing or printing)
-                #         print(f"Turn {turn_idx} - System act - {act_name}: {act_value}")
-                #     else:
-                #         # Handle cases where system_act may not be a list (if any)
-                #         print(f"Turn {turn_idx} - System act: {system_act}")
-
-
     for split in ('train', 'valid', 'test'):
         for key, value in slot_schema.items():
             data.slots[(value.name, value.domain)] = value
