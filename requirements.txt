@@ -1,3 +1,25 @@
+--find-links https://download.pytorch.org/whl/torch_stable.html
+--find-links https://download.pytorch.org/whl/cu118
+
+# requirements for language_model
+torch==2.1.2+cu118
+torchvision
+torchaudio
+transformers[deepspeed]==4.35.0
+accelerate==0.24.1
+peft==0.6.0
+bitsandbytes==0.41.1
+datasets==2.14.6
+scipy
+
+# requirements for SGD evaluation script
+absl-py
+fuzzywuzzy
+numpy
+six
+tensorflow
+python-Levenshtein
+
 
 openai
 numpy

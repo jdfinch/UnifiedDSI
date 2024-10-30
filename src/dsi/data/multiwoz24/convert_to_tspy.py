@@ -37,7 +37,7 @@ def convert_mwoz_to_tspy(data_path):
             # Extract the dialogue turns
             dialogue = source_dial['dialogue']
 
-            previous_state = {}
+            previous_state = {} # (domain, slot_name) -> slot_value
 
             temp = 0
             for turn in dialogue:
@@ -78,14 +78,21 @@ def convert_mwoz_to_tspy(data_path):
                                 domain=slot_domain,)
                             slot_schema[slot_name] = slot_obj
 
+                        if previous_state.get((slot_domain, slot_name), None) == slot_value:
+                            ... # skip probably
+                        else:
+                            previous_state[(slot_domain, slot_name)] = slot_value # the object instead
 
-                        slot_value_obj = ds.SlotValue(
-                            turn_dialogue_id=dialogue_obj.id,
-                            turn_index=user_turn_obj.index,
-                            slot_name=slot_name,
-                            slot_domain=slot_domain,
-                            value=slot_value,)
-                        data.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
+                            slot_value_obj = ds.SlotValue(
+                                turn_dialogue_id=dialogue_obj.id,
+                                turn_index=user_turn_obj.index,
+                                slot_name=slot_name,
+                                slot_domain=slot_domain,
+                                value=slot_value,)
+
+
+                            # remove this (?)
+                            data.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
 
     for split in ('train', 'valid', 'test'):
         for key, value in slot_schema.items():
