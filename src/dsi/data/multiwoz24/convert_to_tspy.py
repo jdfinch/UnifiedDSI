@@ -79,7 +79,7 @@ def convert_mwoz_to_tspy(data_path):
                             slot_schema[slot_name] = slot_obj
 
                         if previous_state.get((slot_domain, slot_name), None) == slot_value:
-                            ... # skip probably
+                            continue
                         else:
                             previous_state[(slot_domain, slot_name)] = slot_value # the object instead
 
@@ -89,9 +89,6 @@ def convert_mwoz_to_tspy(data_path):
                                 slot_name=slot_name,
                                 slot_domain=slot_domain,
                                 value=slot_value,)
-
-
-                            # remove this (?)
                             data.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
 
     for split in ('train', 'valid', 'test'):

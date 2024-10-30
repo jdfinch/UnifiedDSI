@@ -83,38 +83,44 @@ class DSTData:
             dialogue_table = ez.File(pl.Path(self.path) / 'dialogues.tsv').load(format=ez.TSPy)
             slot_table = ez.File(pl.Path(self.path) / 'slots.tsv').load(format=ez.TSPy)
             slot_value_table = ez.File(pl.Path(self.path) / 'slot_values.tsv').load(format=ez.TSPy)
-            ... # given these these tables, convert into the actual objects and link up all the refs
-            ... # This is the deserialization / loading part
 
-            for data in dialogue_table:
-                dialogue_object = Dialogue(id=data['id'])
+            for i, d in enumerate(dialogue_table):
+                if i == 0:
+                    continue
+                dialogue_object = Dialogue(id=d[0])
                 self.dialogues[dialogue_object.id] = dialogue_object
 
-            for turn in turn_table:
+            for i, turn in enumerate(turn_table):
+                if i == 0:
+                    continue
                 turn_obj = Turn(
-                    text=turn['text'],
-                    speaker=turn['speaker'],
-                    dialogue_id=turn['dialogue_id'],
-                    index=turn['index'],
+                    text=turn[0],
+                    speaker=turn[1],
+                    dialogue_id=turn[2],
+                    index=turn[3],
                 )
                 self.turns[(turn_obj.dialogue_id, turn_obj.index)] = turn_obj
                 self.dialogues[turn_obj.dialogue_id].turns.append(turn_obj)
 
-            for slot in slot_table:
+            for i, slot in enumerate(slot_table):
+                if i == 0:
+                    continue
                 slot_obj = Slot(
-                    name=slot['name'],
-                    description=slot['description'],
-                    domain=slot['domain'],
+                    name=slot[0],
+                    description=slot[1],
+                    domain=slot[2],
                 )
                 self.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
 
-            for slot_value in slot_value_table:
+            for i, slot_value in enumerate(slot_value_table):
+                if i == 0:
+                    continue
                 slot_value_obj = SlotValue(
-                    turn_dialogue_id=slot_value['turn_dialogue_id'],
-                    turn_index=slot_value['turn_index'],
-                    slot_name=slot_value['slot_name'],
-                    slot_domain=slot_value['slot_domain'],
-                    value=slot_value['value'],
+                    turn_dialogue_id=slot_value[0],
+                    turn_index=slot_value[1],
+                    slot_name=slot_value[2],
+                    slot_domain=slot_value[3],
+                    value=slot_value[4],
                 )
                 self.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
 
