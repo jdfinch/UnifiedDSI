@@ -20,5 +20,3 @@ mkdir results
 
 source src/dsi/data/multiwoz24/download.sh
 source src/dsi/data/sgd/download.sh
-
-source src/dsi/eval/sgd/download.sh

@@ -23,9 +23,13 @@ import collections
 import json
 import os
 import numpy as np
-import tensorflow.compat.v1 as tf
 
-from schema_guided_dst import metrics
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import ezpyzy as ez
+with ez.shush:
+    import tensorflow.compat.v1 as tf # noqa
+
+from dsi.eval.sgd import metrics
 
 flags = tf.flags
 FLAGS = flags.FLAGS
@@ -240,49 +244,60 @@ def get_metrics(dataset_ref, dataset_hyp, service_schemas, in_domain_services):
   return all_metric_aggregate, per_frame_metric
 
 
-def main(_):
-  tf.logging.set_verbosity(tf.logging.INFO)
+def main(
+    prediction_dir,
+    dstc8_data_dir,
+    eval_set,
+    # output_metric_file,
+):
+  # tf.logging.set_verbosity(tf.logging.INFO)
 
   in_domain_services = get_in_domain_services(
-      os.path.join(FLAGS.dstc8_data_dir, FLAGS.eval_set, "schema.json"),
-      os.path.join(FLAGS.dstc8_data_dir, "train", "schema.json"))
+      os.path.join(dstc8_data_dir, eval_set, "schema.json"),
+      os.path.join(dstc8_data_dir, "train", "schema.json"))
   with tf.io.gfile.GFile(
-      os.path.join(FLAGS.dstc8_data_dir, FLAGS.eval_set, "schema.json")) as f:
+      os.path.join(dstc8_data_dir, eval_set, "schema.json")) as f:
     eval_services = {}
     list_services = json.load(f)
     for service in list_services:
       eval_services[service["service_name"]] = service
 
   dataset_ref = get_dataset_as_dict(
-      os.path.join(FLAGS.dstc8_data_dir, FLAGS.eval_set, "dialogues_*.json"))
+      os.path.join(dstc8_data_dir, eval_set, "dialogues_*.json"))
   dataset_hyp = get_dataset_as_dict(
-      os.path.join(FLAGS.prediction_dir, "*.json"))
+      os.path.join(prediction_dir, "*.json"))
   tf.logging.info("len(dataset_hyp)=%d, len(dataset_ref)=%d", len(dataset_hyp),
                   len(dataset_ref))
   if not dataset_hyp or not dataset_ref:
     raise ValueError("Hypothesis and/or reference dataset are empty!")
 
-  all_metric_aggregate, _ = get_metrics(dataset_ref, dataset_hyp, eval_services,
-                                        in_domain_services)
+  all_metric_aggregate, _ = get_metrics(dataset_ref, dataset_hyp, eval_services, in_domain_services)
   tf.logging.info("Dialog metrics: %s", str(all_metric_aggregate[ALL_SERVICES]))
 
+  return all_metric_aggregate
+
   # Write the aggregated metrics values.
-  with tf.gfile.GFile(FLAGS.output_metric_file, "w") as f:
-    json.dump(
-        all_metric_aggregate,
-        f,
-        indent=2,
-        separators=(",", ": "),
-        sort_keys=True)
+  # with tf.gfile.GFile(output_metric_file, "w") as f:
+  #   json.dump(
+  #       all_metric_aggregate,
+  #       f,
+  #       indent=2,
+  #       separators=(",", ": "),
+  #       sort_keys=True)
   # Write the per-frame metrics values with the corrresponding dialogue frames.
-  with tf.gfile.GFile(
-      os.path.join(FLAGS.prediction_dir, PER_FRAME_OUTPUT_FILENAME), "w") as f:
-    json.dump(dataset_hyp, f, indent=2, separators=(",", ": "))
+  # with tf.gfile.GFile(
+    #   os.path.join(prediction_dir, PER_FRAME_OUTPUT_FILENAME), "w") as f:
+    # json.dump(dataset_hyp, f, indent=2, separators=(",", ": "))
 
 
 if __name__ == "__main__":
-  flags.mark_flag_as_required("prediction_dir")
-  flags.mark_flag_as_required("dstc8_data_dir")
-  flags.mark_flag_as_required("eval_set")
-  flags.mark_flag_as_required("output_metric_file")
-  tf.compat.v1.app.run(main)
+  import pprint as pp
+
+  results = main(
+    prediction_dir='data/sgd/SGD/golddev',
+    dstc8_data_dir='data/sgd/original',
+    eval_set='dev',
+    # output_metric_file='ex/toy/sgd_gold_on_gold_eval.json'
+  )
+
+  pp.pprint(results)
