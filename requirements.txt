@@ -1,8 +1,8 @@
 --find-links https://download.pytorch.org/whl/torch_stable.html
---find-links https://download.pytorch.org/whl/cu118
+--find-links https://download.pytorch.org/whl/cu121
 
 # requirements for language_model
-torch==2.1.2+cu118
+torch==2.1.2+cu121
 torchvision
 torchaudio
 transformers[deepspeed]==4.35.0
