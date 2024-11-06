@@ -4,8 +4,8 @@ import pathlib as pl
 import random
 from collections import defaultdict
 
-data_path = '/Users/yasasvijosyula/Documents/Testing/UnifiedDSI/data/sgd'
-output_path = '/Users/yasasvijosyula/Documents/Testing/UnifiedDSI/data/toy'
+data_path = 'data/sgd'
+output_path = 'data/toy'
 random.seed(42)
 
 for source_split in ('train', 'valid', 'test'):
