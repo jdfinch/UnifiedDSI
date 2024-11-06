@@ -13,13 +13,13 @@ datasets==2.14.6
 scipy
 
 # requirements for SGD evaluation script
-absl-py
-fuzzywuzzy
-numpy
-six
-tensorflow
-python-Levenshtein
+#absl-py
+#fuzzywuzzy
+#numpy
+#six
+#tensorflow
+#python-Levenshtein
 
 
 openai
-numpy
+numpy==1.25.2

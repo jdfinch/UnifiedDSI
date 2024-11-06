@@ -5,6 +5,7 @@ import sys
 import pathlib as pl
 
 import ezpyzy as ez
+from language_model.llama import Llama
 
 import dsi.data.structure as ds
 
@@ -17,7 +18,7 @@ class ExperimentConfig(ez.Config):
     name: str = ez.default(ez.denominate)
     description: str = ''
     path: str = None
-    rng_seed = ez.default(rng.Random)
+    rng_seed: int = ez.default(rng.Random)
     train_data_path: str = None
 
     def __post_init__(self):
@@ -30,15 +31,18 @@ class Experiment(ExperimentConfig):
     def __post_init__(self):
         super().__post_init__()
         """
-        Run the experiment!
+        Run the experiment! (V1)
         
-        * process data
-        * train model (if training)
-        * evaluate model
+        * process data  -  just load the toy data
+        * train model -  (no training for now)
+        * evaluate model - just print and look at it
         * save everything
         """
 
-        self.train_data: ds.DSTData = ds.DSTData(self.train_data_path)
+        model = Llama()
+        print(f"{model.generate('''What's the capital of France?''') = }")
+
+        # self.train_data: ds.DSTData = ds.DSTData(self.train_data_path)
 
 
 if __name__ == '__main__':
