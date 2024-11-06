@@ -20,20 +20,28 @@ for source_split in ('train', 'valid', 'test'):
 
     sample_domains = random.sample(all_domains, 3)
 
-    dialogues_by_domain = defaultdict(list)
+    dialogues_by_domain = {}
 
     for domain in sample_domains:
-        domain_dialogues = [
+        candidate_dialogues_in_domain = [
             dialogue for dialogue in data.dialogues.values()
-            if any(domain in turn.domains for turn in dialogue.turns)
+            if domain in dialogue.domains
         ]
-        sampled_dialogues = random.sample(domain_dialogues, min(2, len(domain_dialogues)))
+        sampled_dialogues = random.sample(candidate_dialogues_in_domain, min(2, len(candidate_dialogues_in_domain)))
         dialogues_by_domain[domain] = sampled_dialogues
 
-    sampled_data = ds.DSTData()
+    toy_data = ds.DSTData()
 
-    for domain_dialogues in dialogues_by_domain.values():
-        sampled_data.turns[(turn.dialogue_id, turn.index)] = ds.Turn()
+    for domain, domain_dialogues in dialogues_by_domain.items():
+        for dialogue in domain_dialogues:
+            toy_data.dialogues[dialogue.id] = dialogue
+            for turn in dialogue.turns:
+                toy_data.turns[(dialogue.id, turn.index)] = turn
+
+
+
+
+        toy_data.turns[(turn.dialogue_id, turn.index)] = ds.Turn()
 
         # Add slot values associated with this turn
         for slot_value in turn.slot_values:
@@ -41,12 +49,12 @@ for source_split in ('train', 'valid', 'test'):
                    slot_value.turn_index,
                    slot_value.slot_domain,
                    slot_value.slot_name)
-            sampled_data.slot_values[key] = slot_value
+            toy_data.slot_values[key] = slot_value
 
             # Add slots if not already added
             slot_key = (slot_value.slot_name, slot_value.slot_domain)
-            if slot_key not in sampled_data.slots:
-                sampled_data.slots[slot_key] = slot_value.slot
+            if slot_key not in toy_data.slots:
+                toy_data.slots[slot_key] = slot_value.slot
 
 
     data.save(f"{output_path}/{source_split}")
