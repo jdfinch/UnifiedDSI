@@ -38,6 +38,8 @@ class Experiment(ExperimentConfig):
         * evaluate model - just print and look at it
         * save everything
         """
+        data = ds.DSTData(train_data_path)
+
 
         model = Llama()
         print(f"{model.generate('''What's the capital of France?''') = }")
@@ -52,5 +54,5 @@ if __name__ == '__main__':
         quit()
 
     Experiment(
-        train_data_path='data/multiwoz/train',
+        train_data_path='data/toy/train',
     )
