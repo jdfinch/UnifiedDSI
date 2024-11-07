@@ -38,26 +38,14 @@ for source_split in ('train', 'valid', 'test'):
             for turn in dialogue.turns:
                 toy_data.turns[(dialogue.id, turn.index)] = turn
 
+                for slot_value in turn.slot_values:
+                    toy_data.slot_values[(dialogue.id, turn.index, domain, slot_value.slot_name)] = slot_value
+                    toy_data.slots[(slot_value.slot_name, slot_value.slot_domain)] = slot_value.slot
 
 
 
-        toy_data.turns[(turn.dialogue_id, turn.index)] = ds.Turn()
 
-        # Add slot values associated with this turn
-        for slot_value in turn.slot_values:
-            key = (slot_value.turn_dialogue_id,
-                   slot_value.turn_index,
-                   slot_value.slot_domain,
-                   slot_value.slot_name)
-            toy_data.slot_values[key] = slot_value
-
-            # Add slots if not already added
-            slot_key = (slot_value.slot_name, slot_value.slot_domain)
-            if slot_key not in toy_data.slots:
-                toy_data.slots[slot_key] = slot_value.slot
-
-
-    data.save(f"{output_path}/{source_split}")
+    toy_data.save(f"{output_path}/{source_split}")
 
 
 
