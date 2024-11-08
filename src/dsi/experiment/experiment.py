@@ -46,6 +46,40 @@ class Experiment(ExperimentConfig):
 
         # self.train_data: ds.DSTData = ds.DSTData(self.train_data_path)
 
+        """
+    
+        for epoch, ppl in enumerate(model.training(train_data)):
+            prediction_data = copy.deepcopy(valid_data)
+            for slot_value in prediction_data.slots.values():
+                slot.value = None # clear the gold
+            for dialogue in valid_data.dialogues:
+                for turn in dialogue.turns:
+                    for slot, gold_value in turn.slot_values.items():
+                        # naive version
+                        prompt = format(dialogue, turn, slot.description)
+                        predicted_value = model.generate(prompt)
+                        prediction_data.slot_values[figure_out_the_id].value = predicted_value
+            
+                        # real version
+                        ... use a class to wrap Llama in a DST approach
+            
+            domain_jgas = {}
+            for domain in valid_data.domains:
+                domain_jga = joint_goal_accuracy(domain, valid_data, prediction_data)
+                domain_jgas[domain] = domain_jga
+                
+            avg_jga = sum(domain_jgas.values()) / len(domain_jgas)
+            
+            metrics = EvaluationMetrics(domain_jgas, avg_jga)
+            
+            model.save(f'ex/myexperiment/{epoch}/model')
+            ez.File('ex/myexperiment/{epoch}/metrics.json').save(dc.asdict(metrics))
+            
+            ez.email(f"Epoch {epoch} complete.  Metrics: {metrics}")
+         
+            
+        """
+
 
 if __name__ == '__main__':
     if len(sys.argv) > 1:
