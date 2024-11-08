@@ -33,11 +33,8 @@ def convert_sgd_to_tspy(data_path):
 
         # Creating all slots
         slot_list = slot_creation(data_path, source_split)
-        print(slot_list)
         for slot_obj in slot_list:
             data.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
-
-        print(data.slots)
 
         for json_file in json_files:
             source_dials = ez.File(json_file).load()  # each one of these are their own dialogue
@@ -62,7 +59,6 @@ def convert_sgd_to_tspy(data_path):
                             dialogue_id=dialogue_idx,
                             index=counter, )
                         data.turns[(user_turn_obj.dialogue_id, user_turn_obj.index)] = user_turn_obj
-                        # print(user_turn_obj.text)
                     else:
                         bot_turn_obj = ds.Turn(
                             text=utterance,
@@ -70,7 +66,6 @@ def convert_sgd_to_tspy(data_path):
                             dialogue_id=dialogue_idx,
                             index=counter, )
                         data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
-                        # print(bot_turn_obj.text)
 
                     for frame in turn.get('frames', []):
                         service = frame.get('service', 'N/A')  # Slot domain
@@ -90,8 +85,7 @@ def convert_sgd_to_tspy(data_path):
                                 turn_index=user_turn_obj.index if speaker == "USER" else bot_turn_obj.index,
                                 slot_name=temp_slot.name,
                                 slot_domain=temp_slot.domain,
-                                value=slot_value, )
-                            print(slot_value_obj)
+                                value=slot_value[0] if slot_value else '?', )
                             data.slot_values[(
                                 slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain,
                                 slot_value_obj.slot_name)] = slot_value_obj
