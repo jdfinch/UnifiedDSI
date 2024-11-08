@@ -38,7 +38,7 @@ class Experiment(ExperimentConfig):
         * evaluate model - just print and look at it
         * save everything
         """
-        data = ds.DSTData(train_data_path)
+        data = ds.DSTData(ExperimentConfig.train_data_path)
 
 
         model = Llama()
