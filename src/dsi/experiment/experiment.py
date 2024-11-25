@@ -11,6 +11,7 @@ import dsi.data.structure as ds
 
 import dataclasses as dc
 from dataclasses import dataclass; vars().update(dataclass=ez.config) # noqa, black magic type hinting
+import dsi.eval.metrics as metrics
 
 
 @dataclass
@@ -38,47 +39,50 @@ class Experiment(ExperimentConfig):
         * evaluate model - just print and look at it
         * save everything
         """
-        data = ds.DSTData(ExperimentConfig.train_data_path)
+        orginal_data = ds.DSTData(ExperimentConfig.train_data_path)
 
 
         model = Llama()
-        print(f"{model.generate('''What's the capital of France?''') = }")
+        all_domains = orginal_data.domains()
+        #print(f"{model.generate('''What's the capital of France?''') = }")
 
         # self.train_data: ds.DSTData = ds.DSTData(self.train_data_path)
 
-        """
+        for dialogue in orginal_data.dialogues.values():
+            for turn in dialogue.turns:
+                ...
     
-        for epoch, ppl in enumerate(model.training(train_data)):
-            prediction_data = copy.deepcopy(valid_data)
+        for epoch, ppl in enumerate(model.training(orginal_data)):
+            prediction_data = copy.deepcopy(orginal_data)
             for slot_value in prediction_data.slots.values():
-                slot.value = None # clear the gold
-            for dialogue in valid_data.dialogues:
+                slot_value = None # clear the gold
+            for dialogue in orginal_data.dialogues:
                 for turn in dialogue.turns:
-                    for slot, gold_value in turn.slot_values.items():
+                    all_domains.extend(turn.domains)
+                    for slot, gold_value in turn.slot_values.items(): # check if the turn.slot_values.items() is valid
                         # naive version
                         prompt = format(dialogue, turn, slot.description)
                         predicted_value = model.generate(prompt)
-                        prediction_data.slot_values[figure_out_the_id].value = predicted_value
-            
+                        prediction_data.slot_values[(dialogue.id,turn.index,turn.domains,slot.name)].value = predicted_value # check if turn_index is correct
+                        #(dialogue_id, turn_index, domain, slot_name)
                         # real version
-                        ... use a class to wrap Llama in a DST approach
+                        #... use a class to wrap Llama in a DST approach
             
             domain_jgas = {}
-            for domain in valid_data.domains:
-                domain_jga = joint_goal_accuracy(domain, valid_data, prediction_data)
+            for domain in all_domains:
+                domain_jga = metrics.joint_goal_accuracy(domain, orginal_data, prediction_data)
                 domain_jgas[domain] = domain_jga
                 
             avg_jga = sum(domain_jgas.values()) / len(domain_jgas)
             
-            metrics = EvaluationMetrics(domain_jgas, avg_jga)
+            results = metrics.EvaluationMetrics(domain_jgas, avg_jga)
             
-            model.save(f'ex/myexperiment/{epoch}/model')
-            ez.File('ex/myexperiment/{epoch}/metrics.json').save(dc.asdict(metrics))
+            #model.save(f'ex/myexperiment/{epoch}/model')
+            #ez.File('ex/myexperiment/{epoch}/metrics.json').save(dc.asdict(results))
             
-            ez.email(f"Epoch {epoch} complete.  Metrics: {metrics}")
+            #ez.email(f"Epoch {epoch} complete.  Metrics: {metrics}")
          
-            
-        """
+
 
 
 if __name__ == '__main__':

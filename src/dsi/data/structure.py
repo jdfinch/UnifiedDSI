@@ -15,7 +15,6 @@ class Turn:
         self.dialogue: list[Turn] = []
         self.slot_values: list[SlotValue] = []
 
-    @property
     def domains(self):
         return {sv.slot_domain for sv in self.slot_values}
 
@@ -30,11 +29,9 @@ class Dialogue:
     def __post_init__(self):
         self.turns: list[Turn] = []
 
-    @property
     def domains(self):
         return {d for t in self.turns for d in t.domains}
 
-    @property
     def speakers(self):
         return list(dict.fromkeys([t.speaker for t in self.turns]))
 
@@ -72,6 +69,13 @@ class DSTData:
     turns: dict[tuple[str, int], Turn] = None  # (dialogue_id, index)
     slots: dict[tuple[str, str], Slot] = None  # (name, domain)
     slot_values: dict[tuple[str, int, str, str], SlotValue] = None # (dialogue_id, turn_index, domain, slot_name)
+
+    def domains(self):
+        all_domains = set()
+        for slot in self.slots.values():
+            all_domains.add(slot.domain)
+        return all_domains
+
     
     def __post_init__(self):
         self.dialogues = {}
