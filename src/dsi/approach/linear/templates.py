@@ -7,64 +7,71 @@ import dataclasses as dc
 
 
 @dc.dataclass
-class SchemaHeader(tok.Template):
-    template = "\n# Key Information Types\n"
+class Schema(tok.Template):
+    template = f"{llama.System('You are an assistant to the user. Your job is to help them analyze dialogues for key information.')}{llama.RoleHeader(role='user')}# Key Information Types\n<slot_descriptions>\n\n"
+    slot_descriptions: tok.Slot = tok.Input()
 
 @dc.dataclass
-class SchemaSlot(tok.Template):
-    template = "* <name>: <description>\n"
-    name: tok.Slot = tok.Input()
-    description: tok.Slot = tok.Input()
+class Dialogue(tok.Template):
+    template = "# Dialogue\n<speaker_turns>\n\nIdentify values from the Dialogue that belong to the listed Key Information Types.{eos}"
+    speaker_turns: tok.Slot = tok.Input()
 
 @dc.dataclass
-class DialogueHeader(tok.Template):
-    template = "\n# Dialogue\n"
+class TrackedSlots(tok.Template):
+    template = f"{llama.RoleHeader('assistant')}# Key Information Values\n<slot_values>"
+    slot_values: tok.Slot = tok.Output()
 
 @dc.dataclass
-class DialogueTurn(tok.Template):
-    template = "<speaker>: <turn>\n"
-    speaker: tok.Slot = tok.Input()
-    turn: tok.Slot = tok.Input()
+class DiscoveredSlots(tok.Template):
+    template = f"{llama.User('Identify additional Key Information from the Dialogue that is NOT yet covered by the above Key Information Types and Key Information Values.')}{llama.RoleHeader('assistant')}# Additional Key Information\n<slot_values>"
+    slot_values: tok.Slot = tok.Output(suffix='\n\n', trunc_text='...\n\n')
 
 @dc.dataclass
-class TrackedHeader(tok.Template):
-    template = "\n# Key Information Values\n"
+class DiscoveredSchema(tok.Template):
+    template = "# Additional Key Information Types\n<slot_descriptions>"
+    slot_descriptions: tok.Slot = tok.Output()
+
 
 @dc.dataclass
-class TrackedSlot(tok.Template):
-    template = "* <slot>: <value>\n"
-    slot: tok.Slot = tok.Input()
-    value: tok.Slot = tok.Output(max=32, trunc_text='...\n', suffix='\n')
-
-@dc.dataclass
-class DiscoveredHeader(tok.Template):
-    template = "\n# Additional Key Information Values\n"
-
-@dc.dataclass
-class DiscoveredSlot(tok.Template):
-    template = "* <slot>: <value>\n"
-    slot: tok.Slot = tok.Output(max=32, trunc_text='...:', suffix=':')
-    value: tok.Slot = tok.Output(max=32, trunc_text='...\n', suffix='\n')
-
-
+class DSI_Templates(llama.Llama3Templates):
+    schema: tok.SegmentTemplate|Schema = Schema()
+    dialogue: tok.SegmentTemplate | Dialogue = Dialogue()
+    tracked_slots: tok.SegmentTemplate | TrackedSlots = TrackedSlots()
+    discovered_slots: tok.SegmentTemplate | DiscoveredSlots = DiscoveredSlots()
+    discovered_schema: tok.SegmentTemplate | DiscoveredSchema = DiscoveredSchema()
 
 
 if __name__ == '__main__':
-    print(''.join(str(x) for x in [
-        SchemaHeader(),
-        SchemaSlot(),
-        SchemaSlot(),
-        DialogueHeader(),
-        DialogueTurn(),
-        DialogueTurn(),
-        DialogueTurn(),
-        TrackedHeader(),
-        TrackedSlot(),
-        TrackedSlot(),
-        DiscoveredHeader(),
-        DiscoveredSlot(),
-        DiscoveredSlot()
-    ]))
+    llt = llama.Llama3TemplateTokenizer(templates=DSI_Templates())
+    lltr = llama.Llama3TemplateTokenizer()
 
+    seq = [
+        Schema(),
+        Dialogue(),
+        TrackedSlots(),
+        DiscoveredSlots(),
+        DiscoveredSchema(),
+    ]
+    strtemp = ''.join(str(x) for x in seq)
+    for segment in seq:
+        for name, slot in vars(segment).items():
+            if isinstance(slot, tok.TokenSlot):
+                setattr(segment, name, 'lorem')
+    strseq = ''.join(str(x) for x in seq)
+    print(strtemp)
+    print('\n')
+    tokens = lltr.tokenize([llama.Text(strseq)])
+    print(repr('|'.join(tokens.tokens()[:-1])))
 
+    for segment in seq:
+        for name, slot in vars(segment).items():
+            if isinstance(slot, tok.TokenSlot):
+                setattr(segment, name, 'lorem ipsum')
+
+    print('\n')
+    tokens = llt.tokenize(seq)
+    print(repr('|'.join(tokens.tokens())))
+
+    print('\n')
+    print(tokens.text())
 
