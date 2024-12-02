@@ -48,7 +48,7 @@ def convert_dot_to_tspy(data_path):
         description = row['description']
         domain = row['domain']
         slot_object = ds.Slot(name=name, description=description, domain=domain)
-        data.slots[(slot_object.name, slot_object.domain)] = slot_object
+        data.slots[(slot_object.domain, slot_object.name)] = slot_object
 
     for index, row in slot_value_df.iterrows():
         print('3')

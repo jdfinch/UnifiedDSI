@@ -93,7 +93,7 @@ def convert_mwoz_to_tspy(data_path):
 
     for split in ('train', 'valid', 'test'):
         for key, value in slot_schema.items():
-            data.slots[(value.name, value.domain)] = value
+            data.slots[(value.domain, value.name)] = value
 
 
 

@@ -34,7 +34,7 @@ def convert_sgd_to_tspy(data_path):
         # Creating all slots
         slot_list = slot_creation(data_path, source_split)
         for slot_obj in slot_list:
-            data.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
+            data.slots[(slot_obj.domain, slot_obj.name)] = slot_obj
 
         for json_file in json_files:
             source_dials = ez.File(json_file).load()  # each one of these are their own dialogue
@@ -71,7 +71,7 @@ def convert_sgd_to_tspy(data_path):
                         service = frame.get('service', 'N/A')  # Slot domain
                         for action in frame.get('actions', []):
                             slot_name = action.get('slot', 'N/A')  # Slot name
-                            if(slot_name == 'intent' or slot_name == '' or slot_name == 'count'):
+                            if slot_name == 'intent' or slot_name == '' or slot_name == 'count':
                                 continue
 
                             temp_slot = data.slots[(slot_name, service)]

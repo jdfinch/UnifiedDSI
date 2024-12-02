@@ -3,6 +3,15 @@ import dataclasses as dc
 import ezpyzy as ez
 import pathlib as pl
 
+import typing as T
+
+def asdict(obj) -> dict[str, T.Any]:
+    return dc.asdict(obj) # noqa
+
+def fields(obj) -> list[dc.Field]:
+    return dc.fields(obj) # noqa
+
+
 
 @dc.dataclass
 class Turn:
@@ -12,11 +21,20 @@ class Turn:
     index: int = None
 
     def __post_init__(self):
-        self.dialogue: list[Turn] = []
+        self.dialogue: 'Dialogue' = None # noqa
         self.slot_values: list[SlotValue] = []
 
     def domains(self):
         return {sv.slot_domain for sv in self.slot_values}
+
+    def slots(self):
+        return {sv.slot for sv in self.slot_values}
+
+    def context(self):
+        return self.dialogue.turns[:self.index+1]
+
+    def history(self):
+        return self.dialogue.turns[:self.index]
 
     def state(self):
         ... # applies all the updates in sequence from the history
@@ -30,7 +48,7 @@ class Dialogue:
         self.turns: list[Turn] = []
 
     def domains(self):
-        return {d for t in self.turns for d in t.domains}
+        return {d for t in self.turns for s in t.slot_values for d in s.slot_domain}
 
     def speakers(self):
         return list(dict.fromkeys([t.speaker for t in self.turns]))
@@ -52,9 +70,9 @@ class SlotValue:
     """"""
     turn_dialogue_id: str = None
     turn_index: int = None
-    slot_name: str = None
     slot_domain: str = None
-    value: str = None
+    slot_name: str = None
+    value: str|None = None
 
     def __post_init__(self):
         self.slot: Slot = None # noqa
@@ -67,7 +85,7 @@ class DSTData:
     path: str = None
     dialogues: dict[str, Dialogue] = None # dialogue_id
     turns: dict[tuple[str, int], Turn] = None  # (dialogue_id, index)
-    slots: dict[tuple[str, str], Slot] = None  # (name, domain)
+    slots: dict[tuple[str, str], Slot] = None  # (domain, name)
     slot_values: dict[tuple[str, int, str, str], SlotValue] = None # (dialogue_id, turn_index, domain, slot_name)
 
     def domains(self):
@@ -76,89 +94,90 @@ class DSTData:
             all_domains.add(slot.domain)
         return all_domains
 
-    
-    def __post_init__(self):
+    def relink(self, dialogues=None, turns=None, slots=None, slot_values=None):
+        if dialogues is None:
+            dialogues = [Dialogue(**asdict(dialogue)) for dialogue in self.dialogues.values()]
+        if turns is None:
+            turns = [Turn(**asdict(turn)) for turn in self.turns.values()]
+        if slots is None:
+            slots = [Slot(**asdict(slot)) for slot in self.slots.values()]
+        if slot_values is None:
+            slot_values = [SlotValue(**asdict(slot_value)) for slot_value in self.slot_values.values()]
         self.dialogues = {}
         self.turns = {}
         self.slots = {}
         self.slot_values = {}
+        for dialogue in dialogues:
+            self.dialogues[dialogue.id] = dialogue
+            dialogue.turns = []
+        for slot in slots:
+            self.slots[slot.name, slot.domain] = slot
+        for turn in turns:
+            self.turns[turn.dialogue_id, turn.index] = turn
+            turn.dialogue = self.dialogues[turn.dialogue_id]
+            while len(turn.dialogue.turns) < turn.index:
+                turn.dialogue.turns.append(None) # noqa
+            if len(turn.dialogue.turns) > turn.index:
+                turn.dialogue.turns[turn.index] = turn
+            else:
+                turns.dialogue.turns.append(turn)
+            turn.slot_values = []
+        for slot_value in slot_values:
+            self.slot_values[
+                slot_value.turn_dialogue_id, slot_value.turn_index, slot_value.slot_domain, slot_value.slot_name
+            ] = slot_value
+            slot_value.slot = self.slots[slot_value.slot_domain, slot_value.slot_name]
+            slot_value.turn = self.turns[slot_value.turn_dialogue_id, slot_value.turn_index]
+            slot_value.turn.slot_values.append(slot_value)
+        return self
+
+    
+    def __post_init__(self):
+        self.dialogues = self.dialogues or {}
+        self.turns = self.turns or {}
+        self.slots = self.slots or {}
+        self.slot_values = self.slot_values or {}
         if self.path is not None:
             turn_table = ez.File(pl.Path(self.path) / 'turns.tsv').load(format=ez.TSPy)
             dialogue_table = ez.File(pl.Path(self.path) / 'dialogues.tsv').load(format=ez.TSPy)
             slot_table = ez.File(pl.Path(self.path) / 'slots.tsv').load(format=ez.TSPy)
             slot_value_table = ez.File(pl.Path(self.path) / 'slot_values.tsv').load(format=ez.TSPy)
 
-            for i, d in enumerate(dialogue_table):
-                if i == 0:
-                    continue
-                dialogue_object = Dialogue(id=d[0])
-                self.dialogues[dialogue_object.id] = dialogue_object
+            turn_table_header, turn_table = turn_table[0], turn_table[1:]
+            dialogue_table_header, dialogue_table = dialogue_table[0], dialogue_table[1:]
+            slot_table_header, slot_table = slot_table[0], slot_table[1:]
+            slot_value_table_header, slot_value_table = slot_value_table[0], slot_value_table[1:]
 
-            for i, turn in enumerate(turn_table):
-                if i == 0:
-                    continue
-                turn_obj = Turn(
-                    text=turn[0],
-                    speaker=turn[1],
-                    dialogue_id=turn[2],
-                    index=turn[3],
-                )
-                self.turns[(turn_obj.dialogue_id, turn_obj.index)] = turn_obj
-                self.dialogues[turn_obj.dialogue_id].turns.append(turn_obj)
+            turn_dicts = [dict(zip(turn_table_header, turn_table_row))
+                for turn_table_row in turn_table]
+            dialogue_dicts = [dict(zip(dialogue_table_header, dialogue_table_row))
+                for dialogue_table_row in dialogue_table]
+            slot_dicts = [dict(zip(slot_table_header, slot_table_row))
+                for slot_table_row in slot_table]
+            slot_value_dicts = [dict(zip(slot_value_table_header, slot_value_row))
+                for slot_value_row in slot_value_table]
 
-            for i, slot in enumerate(slot_table):
-                if i == 0:
-                    continue
-                slot_obj = Slot(
-                    name=slot[0],
-                    description=slot[1],
-                    domain=slot[2],
-                )
-                self.slots[(slot_obj.name, slot_obj.domain)] = slot_obj
+            self.relink(dialogue_dicts, turn_dicts, slot_dicts, slot_value_dicts)
 
-            for i, slot_value in enumerate(slot_value_table):
-                if i == 0:
-                    continue
-                slot_value_obj = SlotValue(
-                    turn_dialogue_id=slot_value[0],
-                    turn_index=slot_value[1],
-                    slot_name=slot_value[2],
-                    slot_domain=slot_value[3],
-                    value=slot_value[4],
-                )
-                self.slot_values[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain, slot_value_obj.slot_name)] = slot_value_obj
 
-                # Link slot value to turn
-                slot_value_obj.turn = self.turns[(slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index)]
-
-                # Link slot value to slot
-                slot_value_obj.slot = self.slots[(slot_value_obj.slot_name, slot_value_obj.slot_domain)]
-
-                # Add slot value to turn's slot_values list
-                slot_value_obj.turn.slot_values.append(slot_value_obj)
-
-    
     def save(self, path:str|pl.Path = None):
-
         """
         Create a list of lists for each table
         Cell values all need to be python literals
-
-        this is serialization step
         """
 
         if path is not None:
             self.path = path
 
-        turns_header = [field.name for field in dc.fields(Turn)]
-        dialogue_header = [field.name for field in dc.fields(Dialogue)]
-        slot_header = [field.name for field in dc.fields(Slot)]
-        slot_value_header = [field.name for field in dc.fields(SlotValue)]
+        turns_header = [field.name for field in fields(Turn)]
+        dialogue_header = [field.name for field in fields(Dialogue)]
+        slot_header = [field.name for field in fields(Slot)]
+        slot_value_header = [field.name for field in fields(SlotValue)]
 
-        turns = [list(dc.asdict(turn).values()) for turn in self.turns.values()]
-        dialogues = [list(dc.asdict(dialogue).values()) for dialogue in self.dialogues.values()]
-        slots = [list(dc.asdict(slot).values()) for slot in self.slots.values()]
-        slot_values = [list(dc.asdict(slot_value).values()) for slot_value in self.slot_values.values()]
+        turns = [list(asdict(turn).values()) for turn in self.turns.values()]
+        dialogues = [list(asdict(dialogue).values()) for dialogue in self.dialogues.values()]
+        slots = [list(asdict(slot).values()) for slot in self.slots.values()]
+        slot_values = [list(asdict(slot_value).values()) for slot_value in self.slot_values.values()]
 
         turn_table = [turns_header, *turns]
         dialogue_table = [dialogue_header, *dialogues]
