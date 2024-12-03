@@ -11,6 +11,7 @@ def asdict(obj) -> dict[str, T.Any]:
 def fields(obj) -> list[dc.Field]:
     return dc.fields(obj) # noqa
 
+default = object()
 
 
 @dc.dataclass
@@ -19,7 +20,7 @@ class Turn:
     speaker: str = None
     dialogue_id: str = None
     index: int = None
-    domains: list[str] = ez.default([])
+    domains: list[str]|None = None
 
     def __post_init__(self):
         self.dialogue: 'Dialogue' = None # noqa
@@ -31,8 +32,9 @@ class Turn:
     def __len__(self):
         return len(self.slot_values)
 
-    def slots(self):
-        return {sv.slot for sv in self.slot_values}
+    def schema(self):
+        return [slot for (domain, slot_name), slot in self.dialogue.data.slots.items()
+            if domain in self.domains]
 
     def context(self):
         return self.dialogue.turns[:self.index+1]
@@ -50,6 +52,7 @@ class Dialogue:
 
     def __post_init__(self):
         self.turns: list[Turn] = []
+        self.data: DSTData = None # noqa
 
     def __iter__(self):
         return iter(self.turns)
@@ -58,7 +61,7 @@ class Dialogue:
         return len(self.turns)
 
     def domains(self):
-        return {d for t in self.turns for d in t.domains}
+        return list({d:None for t in self.turns for d in t.domains})
 
     def speakers(self):
         return list(dict.fromkeys([t.speaker for t in self.turns]))
@@ -139,6 +142,7 @@ class DSTData:
         for dialogue in dialogues:
             self.dialogues[dialogue.id] = dialogue
             dialogue.turns = []
+            dialogue.data = self
         for slot in slots:
             self.slots[slot.domain, slot.name] = slot
         for turn in turns:

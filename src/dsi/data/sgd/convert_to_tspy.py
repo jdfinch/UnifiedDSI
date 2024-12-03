@@ -28,8 +28,9 @@ def convert_sgd_to_tspy(data_path):
 
         # Creating all slots
         slot_list = slot_creation(data_path, source_split)
+        domains_to_slots = {}
         for slot_obj in slot_list:
-            data.slots[(slot_obj.domain, slot_obj.name)] = slot_obj
+            domains_to_slots.setdefault(slot_obj.domain, []).append((slot_obj.domain, slot_obj.name))
 
         all_dials = [source_dial for json_file in json_files for source_dial in ez.File(json_file).load()]
 
@@ -45,7 +46,6 @@ def convert_sgd_to_tspy(data_path):
 
                 dialogue_turns = []
                 running_dialogue_state = {}
-                continued_slots = set()
 
                 for turn_index, turn in enumerate(source_dial['turns']):
                     speaker = turn['speaker']
@@ -67,9 +67,14 @@ def convert_sgd_to_tspy(data_path):
                             index=turn_index)
                         converted_turns.append(user_turn_obj)
                         dialogue_turns.append(user_turn_obj.text)
+
                         for frame in turn.get('frames', []):
                             domain = frame['service']  # Slot domain
                             user_turn_obj.domains.append(domain)
+                            dialogue_state_update = {domain_slot_name: 'N/A'
+                                for domain_slot_name in domains_to_slots[domain]
+                                if running_dialogue_state.get(domain_slot_name) != 'N/A'}
+
                             state = frame['state']
                             for slot_name, value_list in state['slot_values'].items():
                                 slot_value = value_list[0]
@@ -81,35 +86,30 @@ def convert_sgd_to_tspy(data_path):
                                     else:
                                         continue
                                     break
-                                if ((domain, slot_name) not in running_dialogue_state
-                                    or running_dialogue_state[domain, slot_name] != slot_value
+                                if ((domain, slot_name) in running_dialogue_state
+                                    and running_dialogue_state[domain, slot_name] == slot_value
                                 ):
-                                    running_dialogue_state[domain, slot_name] = slot_value
-                                    continued_slots.add((domain, slot_name))
-                                    slot_value_obj = ds.SlotValue(
-                                        turn_dialogue_id=dialogue_obj.id,
-                                        turn_index=user_turn_obj.index,
-                                        slot_name=slot_name,
-                                        slot_domain=domain,
-                                        value=slot_value
-                                    )
-                                    converted_slot_values.append(slot_value_obj)
-                            for slot_name in state['requested_slots']:
-                                if ((domain, slot_name) not in running_dialogue_state
-                                    or running_dialogue_state[domain, slot_name] != '?'
-                                ):
-                                    running_dialogue_state[domain, slot_name] = '?'
-                                    continued_slots.add((domain, slot_name))
-                                    slot_value_obj = ds.SlotValue(
-                                        turn_dialogue_id=dialogue_obj.id,
-                                        turn_index=user_turn_obj.index,
-                                        slot_name=slot_name,
-                                        slot_domain=domain,
-                                        value='?',
-                                    )
-                                    converted_slot_values.append(slot_value_obj)
-                        running_dialogue_state = {k:v for k,v in running_dialogue_state.items()
-                                if k in continued_slots}
+                                    del dialogue_state_update[domain, slot_name]
+                                else:
+                                    dialogue_state_update[domain, slot_name] = slot_value
+                            # for slot_name in state['requested_slots']:
+                            #     if ((domain, slot_name) in running_dialogue_state
+                            #         and running_dialogue_state[domain, slot_name] == '?'
+                            #     ):
+                            #         del dialogue_state_update[domain, slot_name]
+                            #     else:
+                            #         dialogue_state_update[domain, slot_name] = '?'
+                            for (slot_domain, slot_name), slot_value in dialogue_state_update.items():
+                                slot_value_obj = ds.SlotValue(
+                                    turn_dialogue_id=dialogue_obj.id,
+                                    turn_index=user_turn_obj.index,
+                                    slot_name=slot_name,
+                                    slot_domain=slot_domain,
+                                    value=slot_value,
+                                )
+                                converted_slot_values.append(slot_value_obj)
+
+                            running_dialogue_state.update(dialogue_state_update)
 
                 converted_dialogues.append((dialogue_obj, converted_turns, converted_slot_values))
             return converted_dialogues
@@ -126,6 +126,15 @@ def convert_sgd_to_tspy(data_path):
                     slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index,
                     slot_value_obj.slot_domain, slot_value_obj.slot_name
                 ] = slot_value_obj
+
+        used_slots = {(d,s) for dial,t,d,s in data.slot_values
+            if data.slot_values[dial,t,d,s].value != 'N/A'}
+        data.slot_values = {(dial,t,d,s):v for (dial,t,d,s),v in data.slot_values.items()
+            if (d,s) in used_slots}
+        for slot_obj in slot_list:
+            if (slot_obj.domain, slot_obj.name) in used_slots:
+                data.slots[(slot_obj.domain, slot_obj.name)] = slot_obj
+
 
         # Save the data after processing all files in a split
         data.save(f"{data_path}/{split}")
