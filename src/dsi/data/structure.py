@@ -19,13 +19,17 @@ class Turn:
     speaker: str = None
     dialogue_id: str = None
     index: int = None
+    domains: list[str] = ez.default([])
 
     def __post_init__(self):
         self.dialogue: 'Dialogue' = None # noqa
         self.slot_values: list[SlotValue] = []
 
-    def domains(self):
-        return {sv.slot_domain for sv in self.slot_values}
+    def __iter__(self):
+        return iter(self.slot_values)
+
+    def __len__(self):
+        return len(self.slot_values)
 
     def slots(self):
         return {sv.slot for sv in self.slot_values}
@@ -47,8 +51,14 @@ class Dialogue:
     def __post_init__(self):
         self.turns: list[Turn] = []
 
+    def __iter__(self):
+        return iter(self.turns)
+
+    def __len__(self):
+        return len(self.turns)
+
     def domains(self):
-        return {d for t in self.turns for s in t.slot_values for d in s.slot_domain}
+        return {d for t in self.turns for d in t.domains}
 
     def speakers(self):
         return list(dict.fromkeys([t.speaker for t in self.turns]))
@@ -94,15 +104,34 @@ class DSTData:
             all_domains.add(slot.domain)
         return all_domains
 
+    def __iter__(self):
+        return iter(self.dialogues.values())
+
+    def __len__(self):
+        return len(self.dialogues)
+
+    def __str__(self):
+        return f"{type(self).__name__}(len_dialogues={len(self.dialogues)}, len_turns={len(self.turns)}, len_slots={len(self.slots)}, len_slot_values={len(self.slot_values)})"
+    def __repr__(self):
+        return f"<{type(self).__name__} at {hex(id(self))} (len_dialogues={len(self.dialogues)}, len_turns={len(self.turns)}, len_slots={len(self.slots)}, len_slot_values={len(self.slot_values)})>"
+
     def relink(self, dialogues=None, turns=None, slots=None, slot_values=None):
         if dialogues is None:
             dialogues = [Dialogue(**asdict(dialogue)) for dialogue in self.dialogues.values()]
+        else:
+            dialogues = [Dialogue(**dialogue) for dialogue in dialogues]
         if turns is None:
             turns = [Turn(**asdict(turn)) for turn in self.turns.values()]
+        else:
+            turns = [Turn(**turn) for turn in turns]
         if slots is None:
             slots = [Slot(**asdict(slot)) for slot in self.slots.values()]
+        else:
+            slots = [Slot(**slot) for slot in slots]
         if slot_values is None:
             slot_values = [SlotValue(**asdict(slot_value)) for slot_value in self.slot_values.values()]
+        else:
+            slot_values = [SlotValue(**slot_value) for slot_value in slot_values]
         self.dialogues = {}
         self.turns = {}
         self.slots = {}
@@ -111,7 +140,7 @@ class DSTData:
             self.dialogues[dialogue.id] = dialogue
             dialogue.turns = []
         for slot in slots:
-            self.slots[slot.name, slot.domain] = slot
+            self.slots[slot.domain, slot.name] = slot
         for turn in turns:
             self.turns[turn.dialogue_id, turn.index] = turn
             turn.dialogue = self.dialogues[turn.dialogue_id]
@@ -120,7 +149,7 @@ class DSTData:
             if len(turn.dialogue.turns) > turn.index:
                 turn.dialogue.turns[turn.index] = turn
             else:
-                turns.dialogue.turns.append(turn)
+                turn.dialogue.turns.append(turn)
             turn.slot_values = []
         for slot_value in slot_values:
             self.slot_values[
@@ -131,7 +160,7 @@ class DSTData:
             slot_value.turn.slot_values.append(slot_value)
         return self
 
-    
+
     def __post_init__(self):
         self.dialogues = self.dialogues or {}
         self.turns = self.turns or {}
@@ -193,6 +222,7 @@ class DSTData:
 if __name__ == '__main__':
 
     data = DSTData('data/multiwoz24/valid')
+    print(repr(data))
 
 
 

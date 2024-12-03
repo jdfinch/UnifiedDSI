@@ -93,6 +93,7 @@ class DownsampleSlotValues(DataProcessor):
 @dc.dataclass
 class FillNegatives(DataProcessor):
     max_negatives: int = None
+    negative_symbol: str|None = 'N/A'
 
     def run(self, data: ds.DSTData) -> ds.DSTData:
         negative_slots = list(data.slots)
@@ -161,6 +162,76 @@ class SplitDomains(DataProcessor):
             split_data.relink()
             domain_to_data[domain] = split_data
         return list(domain_to_data.values())
+
+
+@dc.dataclass
+class RemoveLabels(DataProcessor):
+
+    def run(self, data: ds.DSTData) -> ds.DSTData:
+        for slot_value in data.slot_values.values():
+            slot_value.value = None
+        return data
+
+
+@dc.dataclass
+class MapLabels(DataProcessor):
+    label_map: dict[str, str] = {}
+
+    def run(self, data: ds.DSTData) -> ds.DSTData:
+        for slot_value in data.slot_values.values():
+            slot_value.value = self.label_map.get(slot_value.value, slot_value.value)
+        return data
+
+
+@dc.dataclass
+class SplitDomainsIntoSingleDomainDialogues:
+    min_num_turns: int = 5
+
+    def run(self, data: ds.DSTData) -> list[ds.DSTData]:
+        assert self.min_num_turns >= 1
+        single_domain_dialogues: dict[str, list[list[ds.Turn]]] = {}
+        for dialogue in data:
+            if not dialogue:
+                continue
+            dialogue_domain = None
+            new_domain_turn_index = len(dialogue)
+            for turn in dialogue.turns:
+                turn_domains = turn.domains()
+                if len(turn_domains) > 1:
+                    new_domain_turn_index = turn.index
+                    break
+                if len(turn_domains) == 1:
+                    turn_domain, = turn_domains
+                    if dialogue_domain is None:
+                        dialogue_domain = turn_domain
+                    elif turn_domain != dialogue_domain:
+                        new_domain_turn_index = turn.index
+                        break
+            if dialogue_domain is None:
+                continue
+            single_domain_turns = dialogue.turns[:new_domain_turn_index]
+            if len(single_domain_turns) > self.min_num_turns:
+                single_domain_dialogues.setdefault(dialogue_domain, []).append(single_domain_turns)
+        single_domain_dialogue_datas = []
+        for domain, turns_prefixes in single_domain_dialogues.items():
+            domain_data = ds.DSTData()
+            keep_slots = set()
+            keep_slot_values = set()
+            for turns_prefix in turns_prefixes:
+                dialogue = ds.Dialogue(id=turns_prefix[0].dialogue_id)
+                domain_data.dialogues[dialogue.id] = dialogue
+                for i, old_turn in enumerate(turns_prefix):
+                    turn = ds.Turn(text=old_turn.text, speaker=old_turn.speaker, dialogue_id=dialogue.id, index=i)
+                    domain_data.turns[dialogue.id, turn.index] = turn
+                    for slot_value in turn:
+                        assert slot_value.slot_domain == domain
+                        keep_slot_values.add((dialogue.id, turn.index, domain, slot_value.slot_name))
+                        keep_slots.add((domain, slot_value.slot_name))
+            domain_data.slots = {k:v for k,v in data.slots.items() if (k,v) in keep_slots}
+            domain_data.slot_values = {k:v for k,v in data.slot_values.items() if (k,v) in keep_slot_values}
+            domain_data.relink()
+            single_domain_dialogue_datas.append(domain_data)
+        return single_domain_dialogue_datas
 
 
 if __name__ == '__main__':

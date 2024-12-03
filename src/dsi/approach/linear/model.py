@@ -1,8 +1,11 @@
 
 
 import ezpyzy as ez
-import language_model.llama3 as llama
 import dataclasses as dc
+import language_model.llama3 as llama
+
+import dsi.data.structure as ds
+
 
 
 @dc.dataclass
@@ -11,7 +14,7 @@ class LinearDSIConfig(ez.Config):
 
 class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
 
-    def track(self, _):
+    def track(self, data: ds.DSTData):
         ...
 
 

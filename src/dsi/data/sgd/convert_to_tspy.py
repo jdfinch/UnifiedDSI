@@ -2,32 +2,27 @@ import dsi.data.structure as ds
 import ezpyzy as ez
 import pathlib as pl
 import json
+import tqdm
 
 split_name_map = dict(dev='valid')
 
 def slot_creation(data_path, split):
     slots_list = []
     source_path = pl.Path(data_path) / 'original' / f"{split}" / 'schema.json'
-    if source_path.exists():
-
-        with open(source_path, 'r') as file:
-            services = json.load(file)
-            for service in services:
-                domain = service['service_name']
-                for slot_info in service.get('slots', []):
-                    # Create a Slot instance
-                    slot = ds.Slot(name=slot_info['name'], description=slot_info['description'], domain=domain)
-                    slots_list.append(slot)
+    with open(source_path, 'r') as file:
+        services = json.load(file)
+    for service in services:
+        domain = service['service_name']
+        for slot_info in service.get('slots', []):
+            slot = ds.Slot(name=slot_info['name'], description=slot_info['description'], domain=domain)
+            slots_list.append(slot)
     return slots_list
-
-
 
 def convert_sgd_to_tspy(data_path):
     for source_split in ('train', 'test', 'dev'):
         source_path = pl.Path(data_path) / 'original' / f"{source_split}"
-        output_path = pl.Path(data_path) / 'original'
         split = split_name_map.get(source_split, source_split)
-        json_files = sorted(source_path.glob('*.json'))
+        json_files = sorted(source_path.glob('dialog*.json'))
 
         data = ds.DSTData()
 
@@ -36,63 +31,104 @@ def convert_sgd_to_tspy(data_path):
         for slot_obj in slot_list:
             data.slots[(slot_obj.domain, slot_obj.name)] = slot_obj
 
-        for json_file in json_files:
-            source_dials = ez.File(json_file).load()  # each one of these are their own dialogue
+        all_dials = [source_dial for json_file in json_files for source_dial in ez.File(json_file).load()]
 
-            for source_dial in source_dials:
-                dialogue_idx = str(source_dial.get('dialogue_id', None))
+        def convert_dialogues(all_dials=all_dials):
+            converted_dialogues = []
 
-                if dialogue_idx == "None":
-                    continue
+            for source_dial in tqdm.tqdm(all_dials, f"Converting {split} dialogues"):
+                dialogue_idx = str(source_dial['dialogue_id'])
 
                 dialogue_obj = ds.Dialogue(id=dialogue_idx)
-                data.dialogues[dialogue_obj.id] = dialogue_obj
+                converted_turns = []
+                converted_slot_values = []
 
-                counter = 0
-                for turn in source_dial['turns']:
-                    speaker = turn.get('speaker', 'N/A')
-                    utterance = turn.get('utterance', '')
-                    if speaker == "USER":
-                        user_turn_obj = ds.Turn(
-                            text=utterance,
-                            speaker='user',
-                            dialogue_id=dialogue_idx,
-                            index=counter, )
-                        data.turns[(user_turn_obj.dialogue_id, user_turn_obj.index)] = user_turn_obj
-                    else:
+                dialogue_turns = []
+                running_dialogue_state = {}
+
+                for turn_index, turn in enumerate(source_dial['turns']):
+                    speaker = turn['speaker']
+                    utterance = turn['utterance']
+
+                    if speaker == 'SYSTEM':
                         bot_turn_obj = ds.Turn(
                             text=utterance,
                             speaker='bot',
                             dialogue_id=dialogue_idx,
-                            index=counter, )
-                        data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
+                            index=turn_index)
+                        converted_turns.append(bot_turn_obj)
+                        dialogue_turns.append(bot_turn_obj.text)
+                    elif speaker == "USER":
+                        user_turn_obj = ds.Turn(
+                            text=utterance,
+                            speaker='user',
+                            dialogue_id=dialogue_idx,
+                            index=turn_index)
+                        converted_turns.append(user_turn_obj)
+                        dialogue_turns.append(user_turn_obj.text)
+                        continued_slots = set()
+                        for frame in turn.get('frames', []):
+                            domain = frame['service']  # Slot domain
+                            user_turn_obj.domains.append(domain)
+                            state = frame['state']
+                            for slot_name, value_list in state['slot_values'].items():
+                                slot_value = value_list[0]
+                                for dialogue_turn in reversed(dialogue_turns):
+                                    for value_in_list in value_list:
+                                        if value_in_list in dialogue_turn:
+                                            slot_value = value_in_list
+                                            break
+                                    else:
+                                        continue
+                                    break
+                                if (slot_name not in running_dialogue_state
+                                    or running_dialogue_state[domain, slot_name] != slot_value
+                                ):
+                                    running_dialogue_state[domain, slot_name] = slot_value
+                                    continued_slots.add((domain, slot_name))
+                                    slot_value_obj = ds.SlotValue(
+                                        turn_dialogue_id=dialogue_obj.id,
+                                        turn_index=user_turn_obj.index,
+                                        slot_name=slot_name,
+                                        slot_domain=domain,
+                                        value=slot_value
+                                    )
+                                    converted_slot_values.append(slot_value_obj)
+                            for slot_name in state['requested_slots']:
+                                if (slot_name not in running_dialogue_state
+                                    or running_dialogue_state[domain, slot_name] != '?'
+                                ):
+                                    running_dialogue_state[domain, slot_name] = '?'
+                                    continued_slots.add((domain, slot_name))
+                                    slot_value_obj = ds.SlotValue(
+                                        turn_dialogue_id=dialogue_obj.id,
+                                        turn_index=user_turn_obj.index,
+                                        slot_name=slot_name,
+                                        slot_domain=domain,
+                                        value='?',
+                                    )
+                                    converted_slot_values.append(slot_value_obj)
+                            running_dialogue_state = {k:v for k,v in running_dialogue_state.items()
+                                if k not in continued_slots}
 
-                    for frame in turn.get('frames', []):
-                        service = frame.get('service', 'N/A')  # Slot domain
-                        for action in frame.get('actions', []):
-                            slot_name = action.get('slot', 'N/A')  # Slot name
-                            if slot_name == 'intent' or slot_name == '' or slot_name == 'count':
-                                continue
+                converted_dialogues.append((dialogue_obj, converted_turns, converted_slot_values))
+            return converted_dialogues
 
-                            temp_slot = data.slots[(slot_name, service)]
+        # converted = ez.multiprocess(convert_dialogues, all_dials, display=True)
+        converted = convert_dialogues(all_dials)
 
-                            slot_value = action.get('canonical_values', 'N/A')
-                            if slot_value is None:
-                                continue  # Skip if slot_value is missing
+        for dialogue_obj, converted_turns, converted_slot_values in converted:
+            data.dialogues[dialogue_obj.id] = dialogue_obj
+            for turn_obj in converted_turns:
+                data.turns[(turn_obj.dialogue_id, turn_obj.index)] = turn_obj
+            for slot_value_obj in converted_slot_values:
+                data.slot_values[
+                    slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index,
+                    slot_value_obj.slot_domain, slot_value_obj.slot_name
+                ] = slot_value_obj
 
-                            slot_value_obj = ds.SlotValue(
-                                turn_dialogue_id=dialogue_obj.id,
-                                turn_index=user_turn_obj.index if speaker == "USER" else bot_turn_obj.index,
-                                slot_name=temp_slot.name,
-                                slot_domain=temp_slot.domain,
-                                value=slot_value[0] if slot_value else '?', )
-                            data.slot_values[(
-                                slot_value_obj.turn_dialogue_id, slot_value_obj.turn_index, slot_value_obj.slot_domain,
-                                slot_value_obj.slot_name)] = slot_value_obj
-
-                    counter += 1
-            # Save the data after processing all files in a split
-            data.save(f"{data_path}/{split}")
+        # Save the data after processing all files in a split
+        data.save(f"{data_path}/{split}")
 
 if __name__ == '__main__':
     convert_sgd_to_tspy('data/sgd')
