@@ -45,6 +45,7 @@ def convert_sgd_to_tspy(data_path):
 
                 dialogue_turns = []
                 running_dialogue_state = {}
+                continued_slots = set()
 
                 for turn_index, turn in enumerate(source_dial['turns']):
                     speaker = turn['speaker']
@@ -66,7 +67,6 @@ def convert_sgd_to_tspy(data_path):
                             index=turn_index)
                         converted_turns.append(user_turn_obj)
                         dialogue_turns.append(user_turn_obj.text)
-                        continued_slots = set()
                         for frame in turn.get('frames', []):
                             domain = frame['service']  # Slot domain
                             user_turn_obj.domains.append(domain)
@@ -81,7 +81,7 @@ def convert_sgd_to_tspy(data_path):
                                     else:
                                         continue
                                     break
-                                if (slot_name not in running_dialogue_state
+                                if ((domain, slot_name) not in running_dialogue_state
                                     or running_dialogue_state[domain, slot_name] != slot_value
                                 ):
                                     running_dialogue_state[domain, slot_name] = slot_value
@@ -95,7 +95,7 @@ def convert_sgd_to_tspy(data_path):
                                     )
                                     converted_slot_values.append(slot_value_obj)
                             for slot_name in state['requested_slots']:
-                                if (slot_name not in running_dialogue_state
+                                if ((domain, slot_name) not in running_dialogue_state
                                     or running_dialogue_state[domain, slot_name] != '?'
                                 ):
                                     running_dialogue_state[domain, slot_name] = '?'
@@ -108,8 +108,8 @@ def convert_sgd_to_tspy(data_path):
                                         value='?',
                                     )
                                     converted_slot_values.append(slot_value_obj)
-                            running_dialogue_state = {k:v for k,v in running_dialogue_state.items()
-                                if k not in continued_slots}
+                        running_dialogue_state = {k:v for k,v in running_dialogue_state.items()
+                                if k in continued_slots}
 
                 converted_dialogues.append((dialogue_obj, converted_turns, converted_slot_values))
             return converted_dialogues
