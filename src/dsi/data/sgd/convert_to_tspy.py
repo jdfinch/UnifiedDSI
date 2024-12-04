@@ -45,7 +45,6 @@ def convert_sgd_to_tspy(data_path):
                 converted_slot_values = []
 
                 dialogue_turns = []
-                running_dialogue_state = {}
 
                 for turn_index, turn in enumerate(source_dial['turns']):
                     speaker = turn['speaker']
@@ -56,24 +55,26 @@ def convert_sgd_to_tspy(data_path):
                             text=utterance,
                             speaker='bot',
                             dialogue_id=dialogue_idx,
-                            index=turn_index)
+                            index=turn_index,
+                            domains=[])
                         converted_turns.append(bot_turn_obj)
                         dialogue_turns.append(bot_turn_obj.text)
+                        for frame in turn['frames']:
+                            domain = frame['service']
+                            bot_turn_obj.domains.append(domain)
                     elif speaker == "USER":
                         user_turn_obj = ds.Turn(
                             text=utterance,
                             speaker='user',
                             dialogue_id=dialogue_idx,
-                            index=turn_index)
+                            index=turn_index,
+                            domains=[])
                         converted_turns.append(user_turn_obj)
                         dialogue_turns.append(user_turn_obj.text)
 
                         for frame in turn.get('frames', []):
                             domain = frame['service']  # Slot domain
                             user_turn_obj.domains.append(domain)
-                            dialogue_state_update = {domain_slot_name: 'N/A'
-                                for domain_slot_name in domains_to_slots[domain]
-                                if running_dialogue_state.get(domain_slot_name) != 'N/A'}
 
                             state = frame['state']
                             for slot_name, value_list in state['slot_values'].items():
@@ -86,30 +87,15 @@ def convert_sgd_to_tspy(data_path):
                                     else:
                                         continue
                                     break
-                                if ((domain, slot_name) in running_dialogue_state
-                                    and running_dialogue_state[domain, slot_name] == slot_value
-                                ):
-                                    del dialogue_state_update[domain, slot_name]
-                                else:
-                                    dialogue_state_update[domain, slot_name] = slot_value
-                            # for slot_name in state['requested_slots']:
-                            #     if ((domain, slot_name) in running_dialogue_state
-                            #         and running_dialogue_state[domain, slot_name] == '?'
-                            #     ):
-                            #         del dialogue_state_update[domain, slot_name]
-                            #     else:
-                            #         dialogue_state_update[domain, slot_name] = '?'
-                            for (slot_domain, slot_name), slot_value in dialogue_state_update.items():
+
                                 slot_value_obj = ds.SlotValue(
                                     turn_dialogue_id=dialogue_obj.id,
                                     turn_index=user_turn_obj.index,
                                     slot_name=slot_name,
-                                    slot_domain=slot_domain,
+                                    slot_domain=domain,
                                     value=slot_value,
                                 )
                                 converted_slot_values.append(slot_value_obj)
-
-                            running_dialogue_state.update(dialogue_state_update)
 
                 converted_dialogues.append((dialogue_obj, converted_turns, converted_slot_values))
             return converted_dialogues

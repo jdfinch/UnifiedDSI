@@ -33,8 +33,11 @@ class Turn:
         return len(self.slot_values)
 
     def schema(self):
-        return [slot for (domain, slot_name), slot in self.dialogue.data.slots.items()
-            if domain in self.domains]
+        if self.domains is not None:
+            return [slot for (domain, slot_name), slot in self.dialogue.data.slots.items()
+                if domain in self.domains]
+        else:
+            return self.dialogue.data.schema()
 
     def context(self):
         return self.dialogue.turns[:self.index+1]
@@ -42,8 +45,24 @@ class Turn:
     def history(self):
         return self.dialogue.turns[:self.index]
 
-    def state(self):
-        ... # applies all the updates in sequence from the history
+    def add_slot_value(self, slot_value: 'SlotValue'):
+        assert slot_value.slot_domain is not None
+        assert slot_value.slot_name is not None
+        assert slot_value.value is not None
+        slot_value.turn_dialogue_id = self.dialogue_id
+        slot_value.turn_index = self.index
+        slot_value.slot = self.dialogue.data.slots[slot_value.slot_domain, slot_value.slot_name]
+        self.slot_values.append(slot_value)
+        self.dialogue.data.slot_values[
+            slot_value.turn_dialogue_id, slot_value.turn_index,
+            slot_value.slot_domain, slot_value.slot_name
+        ] = slot_value
+
+    def add_slot(self, slot: 'Slot'):
+        assert slot.name is not None
+        assert slot.domain is not None
+        assert self.domains is None or slot.domain in self.domains
+        self.dialogue.data.slots[slot.domain, slot.name] = slot
 
 
 @dc.dataclass
@@ -61,10 +80,16 @@ class Dialogue:
         return len(self.turns)
 
     def domains(self):
-        return list({d:None for t in self.turns for d in t.domains})
+        if all(t.domains is not None for t in self.turns):
+            return dict.fromkeys(d for t in self.turns for d in t.domains)
+        else:
+            return dict.fromkeys(s.slot_domain for t in self.turns for s in t.slot_values)
 
     def speakers(self):
         return list(dict.fromkeys([t.speaker for t in self.turns]))
+
+    def schema(self):
+        return list({(s.domain, s.name): s for t in self.turns for s in t.schema()}.values())
 
 
 @dc.dataclass
@@ -106,6 +131,9 @@ class DSTData:
         for slot in self.slots.values():
             all_domains.add(slot.domain)
         return all_domains
+
+    def schema(self):
+        return list(self.slots.values())
 
     def __iter__(self):
         return iter(self.dialogues.values())

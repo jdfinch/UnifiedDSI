@@ -46,12 +46,13 @@ def convert_mwoz_to_tspy(data_path):
                 transcript = turn.get('transcript', "") # human turn
                 belief_state = turn['belief_state']
 
-                if not(temp == 0 and system_transcript == ""):
+                if not (temp == 0 and system_transcript == ""):
                     bot_turn_obj = ds.Turn(
                         text=system_transcript,
                         speaker='bot',
                         dialogue_id=dialogue_idx,
-                        index=temp, )
+                        index=temp,
+                        domains=[turn['domain']])
                     data.turns[(bot_turn_obj.dialogue_id, bot_turn_obj.index)] = bot_turn_obj
                     temp += 1
 
@@ -59,7 +60,8 @@ def convert_mwoz_to_tspy(data_path):
                     text=transcript,
                     speaker='user',
                     dialogue_id=dialogue_idx,
-                    index=temp, )
+                    index=temp,
+                    domains=[turn['domain']])
                 data.turns[(user_turn_obj.dialogue_id, user_turn_obj.index)] = user_turn_obj
                 temp += 1
 
