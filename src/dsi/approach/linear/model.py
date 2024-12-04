@@ -53,7 +53,9 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
             schema = turn.schema()
             if self.train_shuffle_schema: self.rng.shuffle(schema)
             context = turn.context()
-            context_text = '\n'.join(f"{past_turn.speaker}: {past_turn.text}" for past_turn in context)
+            context_text = '\n'.join(
+                f"{self.speaker_map.get(past_turn.speaker, past_turn.speaker)}: {past_turn.text}"
+                for past_turn in context)
             state = {slot_value.slot_name: slot_value.value for slot_value in turn.slot_values}
             if full_schema:
                 schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)
@@ -101,7 +103,9 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                 schema = turn.schema()
                 context = turn.context()
                 schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)
-                context_text = '\n'.join(f"{past_turn.speaker}: {past_turn.text}" for past_turn in context)
+                context_text = '\n'.join(
+                    f"{self.speaker_map.get(past_turn.speaker, past_turn.speaker)}: {past_turn.text}"
+                    for past_turn in context)
                 prompt = [
                     temp.Schema(slot_descriptions=schema_text),
                     temp.Dialogue(speaker_turns=context_text),
@@ -135,7 +139,9 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                 schema = turn.schema()
                 context = turn.context()
                 schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)
-                context_text = '\n'.join(f"{past_turn.speaker}: {past_turn.text}" for past_turn in context)
+                context_text = '\n'.join(
+                    f"{self.speaker_map.get(past_turn.speaker, past_turn.speaker)}: {past_turn.text}"
+                    for past_turn in context)
                 prompt = [
                     temp.Schema(slot_descriptions=schema_text),
                     temp.Dialogue(speaker_turns=context_text),
