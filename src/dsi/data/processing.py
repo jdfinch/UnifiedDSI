@@ -9,13 +9,14 @@ import copy as cp
 
 
 @dc.dataclass
-class DataProcessingPipelineConfig(ez.Config):
+class DataProcessingPipeline(ez.Config):
     load_path: str = None
     rng_seed: int = None
     processors: ez.MultiConfig['DataProcessor'] = ez.MultiConfig()
 
     def __post_init__(self):
         super().__post_init__()
+        self.data: ds.DSTData = None # noqa
         if self.rng_seed is None:
             with self.configured.not_configuring():
                 self.rng_seed = rng.randint(1, sys.maxsize)
@@ -24,29 +25,22 @@ class DataProcessingPipelineConfig(ez.Config):
             if isinstance(processor, DataProcessor):
                 processor.rng = self.rng
 
-
-
-@dc.dataclass
-class DataProcessingPipeline(ez.ImplementsConfig, DataProcessingPipelineConfig):
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.data: ds.DSTData = ds.DSTData(self.load_path)
-        self.data = self.run(self.data)
-
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData = None) -> ds.DSTData:
+        if data is None:
+            data = ds.DSTData(self.load_path)
         data = [cp.deepcopy(data)]
         for name, processor in self:
             if isinstance(processor, DataProcessor):
                 updated = []
                 for subdata in data:
-                    processed_subdata = processor.run(subdata)
+                    processed_subdata = processor.process(subdata)
                     if isinstance(processed_subdata, list):
                         updated.extend(processed_subdata)
                     else:
                         updated.append(processed_subdata)
                 data = updated
         processed, = data
+        self.data = processed
         return processed
 
 
@@ -67,7 +61,7 @@ class DataProcessor(ez.Config):
 class DownsampleDialogues(DataProcessor):
     n: int = None
 
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData) -> ds.DSTData:
         assert isinstance(self.n, int)
         sample = set(self.rng.sample(data.dialogues, self.n))
         data.dialogues = {k: v for k, v in data.dialogues.items() if k in sample}
@@ -79,7 +73,7 @@ class DownsampleDialogues(DataProcessor):
 class DownsampleTurns(DataProcessor):
     n: int = None
 
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData) -> ds.DSTData:
         assert isinstance(self.n, int)
         sample = set(self.rng.sample(data.turns, self.n))
         data.slot_values = {
@@ -94,7 +88,7 @@ class DownsampleTurns(DataProcessor):
 class DownsampleSlotValues(DataProcessor):
     n: int = None
 
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData) -> ds.DSTData:
         assert isinstance(self.n, int)
         sample = set(self.rng.sample(data.slot_values, self.n))
         data.slot_values = {k: v for k, v in data.slot_values.items() if k in sample}
@@ -107,7 +101,7 @@ class FillNegatives(DataProcessor):
     max_negatives: int = None
     negative_symbol: str|None = 'N/A'
 
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData) -> ds.DSTData:
         negative_slots = list(data.slots)
         negative_slots_set = set(negative_slots)
         for dialogue in data.dialogues.values():
@@ -133,7 +127,7 @@ class FillNegatives(DataProcessor):
 @dc.dataclass
 class Concatenate(DataProcessor):
 
-    def run(self, data: list[ds.DSTData]) -> ds.DSTData:
+    def process(self, data: list[ds.DSTData]) -> ds.DSTData:
         cat_data = ds.DSTData()
         for sub_data in reversed(data):
             cat_data.slots.update(sub_data.slots)
@@ -153,7 +147,7 @@ class Concatenate(DataProcessor):
 class SelectDomains(DataProcessor):
     domains: list[str] = None
 
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData) -> ds.DSTData:
         assert self.domains is not None
         domains_set = set(self.domains)
         data.slots = {k: v for k, v in data.slots.items() if v.domain in domains_set}
@@ -165,7 +159,7 @@ class SelectDomains(DataProcessor):
 @dc.dataclass
 class SplitDomains(DataProcessor):
 
-    def run(self, data: ds.DSTData) -> list[ds.DSTData]:
+    def process(self, data: ds.DSTData) -> list[ds.DSTData]:
         domain_to_data = {}
         for domain in {slot.domain for slot in data.slots.values()}:
             split_data = cp.deepcopy(data)
@@ -179,7 +173,7 @@ class SplitDomains(DataProcessor):
 @dc.dataclass
 class RemoveLabels(DataProcessor):
 
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData) -> ds.DSTData:
         for slot_value in data.slot_values.values():
             slot_value.value = None
         return data
@@ -189,7 +183,7 @@ class RemoveLabels(DataProcessor):
 class MapLabels(DataProcessor):
     label_map: dict[str, str] = {}
 
-    def run(self, data: ds.DSTData) -> ds.DSTData:
+    def process(self, data: ds.DSTData) -> ds.DSTData:
         for slot_value in data.slot_values.values():
             slot_value.value = self.label_map.get(slot_value.value, slot_value.value)
         return data
@@ -199,7 +193,7 @@ class MapLabels(DataProcessor):
 class SplitDomainsIntoSingleDomainDialogues(DataProcessor):
     min_num_turns: int = 5
 
-    def run(self, data: ds.DSTData) -> list[ds.DSTData]:
+    def process(self, data: ds.DSTData) -> list[ds.DSTData]:
         assert self.min_num_turns >= 1
         single_domain_dialogues: dict[str, list[list[ds.Turn]]] = {}
         for dialogue in data:
@@ -244,6 +238,7 @@ class SplitDomainsIntoSingleDomainDialogues(DataProcessor):
             domain_data.relink()
             single_domain_dialogue_datas.append(domain_data)
         return single_domain_dialogue_datas
+
 
 @dc.dataclass
 class MapSchema(DataProcessor):
