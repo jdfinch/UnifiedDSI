@@ -9,8 +9,10 @@ import copy as cp
 
 
 @dc.dataclass
-class DataProcessingPipeline(ez.MultiConfig):
+class DataProcessingPipelineConfig(ez.Config):
+    load_path: str = None
     rng_seed: int = None
+    processors: ez.MultiConfig['DataProcessor'] = ez.MultiConfig()
 
     def __post_init__(self):
         super().__post_init__()
@@ -18,9 +20,19 @@ class DataProcessingPipeline(ez.MultiConfig):
             with self.configured.not_configuring():
                 self.rng_seed = rng.randint(1, sys.maxsize)
         self.rng = rng.Random(self.rng_seed)
-        for name, processor in self:
+        for name, processor in self.processors:
             if isinstance(processor, DataProcessor):
                 processor.rng = self.rng
+
+
+
+@dc.dataclass
+class DataProcessingPipeline(ez.ImplementsConfig, DataProcessingPipelineConfig):
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.data: ds.DSTData = ds.DSTData(self.load_path)
+        self.data = self.run(self.data)
 
     def run(self, data: ds.DSTData) -> ds.DSTData:
         data = [cp.deepcopy(data)]
@@ -184,7 +196,7 @@ class MapLabels(DataProcessor):
 
 
 @dc.dataclass
-class SplitDomainsIntoSingleDomainDialogues:
+class SplitDomainsIntoSingleDomainDialogues(DataProcessor):
     min_num_turns: int = 5
 
     def run(self, data: ds.DSTData) -> list[ds.DSTData]:
@@ -232,6 +244,10 @@ class SplitDomainsIntoSingleDomainDialogues:
             domain_data.relink()
             single_domain_dialogue_datas.append(domain_data)
         return single_domain_dialogue_datas
+
+@dc.dataclass
+class MapSchema(DataProcessor):
+    ...
 
 
 if __name__ == '__main__':
