@@ -180,6 +180,18 @@ class RemoveLabels(DataProcessor):
 
 
 @dc.dataclass
+class RemoveSchema(DataProcessor):
+
+    def process(self, data: ds.DSTData) -> ds.DSTData:
+        data.slot_values = {}
+        data.slots = {}
+        for turn in data.turns.values():
+            turn.domains = []
+        data.relink()
+        return data
+
+
+@dc.dataclass
 class MapLabels(DataProcessor):
     label_map: dict[str, str] = {}
 

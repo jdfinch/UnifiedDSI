@@ -39,6 +39,10 @@ class LinearDSIConfig(ez.Config):
 
 class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
 
+    def __post_init__(self):
+        super().__post_init__()
+        self.model = ez.construct_implementation_of(self.model)
+
     def train(self, data: ds.DSTData):
         assert self.train_percent_full_schema + self.train_percent_empty_schema <= 1.0
         turns = list(data.turns.values())
