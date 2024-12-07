@@ -3,6 +3,7 @@
 import ezpyzy as ez
 import dataclasses as dc
 import language_model.llama3 as llama
+import ezpyzy.ansi as ansi
 
 import dsi.data.structure as ds
 import dsi.approach.linear.templates as temp
@@ -24,10 +25,11 @@ class LinearDSIConfig(ez.Config):
     slot_value_pattern: str = r'^\*\s*(?P<slot>[^:]+):\s*(?P<value>.*)$'
     discovered_value_pattern: str = r'^\*\s*(?P<slot>[^:]+):\s*(?P<value>.*)$'
     discovered_slot_pattern: str = r'^\*\s*(?P<slot>[^:]+):\s*(?P<description>.*)$'
+    ignore_bot_turns: bool = True
 
-    model: llama.Llama3 = llama.Llama3Config(
+    model: llama.Llama3Config = llama.Llama3Config(
         template_tokenizer=llama.Llama3TemplateTokenizerConfig(
-            templates=temp.DSI_Templates()
+            templates=temp.LinearDSI_Templates()
         )
     )
     
@@ -35,15 +37,25 @@ class LinearDSIConfig(ez.Config):
         super().__post_init__()
         if self.rng_seed is None:
             self.rng_seed = rng.randint(1, sys.maxsize)
-        self.rng = rng.Random(self.rng_seed)
+        self.rng: rng.Random
+
+    def _set_rng_seed(self, rng_seed):
+        self.rng = rng.Random(rng_seed)
+        return rng_seed
 
 class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
 
+    model: llama.Llama3 = llama.Llama3Config(
+        template_tokenizer=llama.Llama3TemplateTokenizerConfig(
+            templates=temp.LinearDSI_Templates()
+        )
+    )
+
     def __post_init__(self):
         super().__post_init__()
-        self.model = ez.construct_implementation_of(self.model)
 
     def train(self, data: ds.DSTData):
+        example_sequence = None
         assert self.train_percent_full_schema + self.train_percent_empty_schema <= 1.0
         turns = list(data.turns.values())
         full_schema_flags = [True] * int(len(turns)*self.train_percent_full_schema)
@@ -54,6 +66,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
         self.rng.shuffle(flags)
         seqs = []
         for turn, (full_schema, empty_schema) in zip(turns, flags):
+            if self.ignore_bot_turns and turn.speaker == 'bot': continue
             schema = turn.schema()
             if self.train_shuffle_schema: self.rng.shuffle(schema)
             context = turn.context()
@@ -63,7 +76,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
             state = {slot_value.slot_name: slot_value.value for slot_value in turn.slot_values}
             if full_schema:
                 schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)
-                slot_values_text = '\n'.join(f"{slot.name}: {state.get(slot.name, 'N/A')}" for slot in schema)
+                slot_values_text = '\n'.join(f"* {slot.name}: {state.get(slot.name, 'N/A')}" for slot in schema)
                 seq = [
                     temp.Schema(slot_descriptions=schema_text),
                     temp.Dialogue(speaker_turns=context_text),
@@ -71,9 +84,14 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                     temp.DiscoveredSlots(slot_values=self.nothing_to_discover_text),
                     temp.DiscoveredSchema(slot_descriptions=self.nothing_to_discover_text)]
             elif empty_schema:
-                discovered_schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)
-                discovered_slot_values_text = '\n'.join(
-                    f"{slot.name}: {state.get(slot.name, 'N/A')}" for slot in schema)
+                discovered_schema_state = {slot.name: state.get(slot.name) for slot in schema}
+                if discovered_schema_state:
+                    discovered_slot_values_text = '\n'.join(f"* {s}: {v}" for s, v in discovered_schema_state.items())
+                    discovered_schema_text = '\n'.join(f"* {slot.name}: {slot.description}"
+                        for slot in schema if slot.name in discovered_schema_state)
+                else:
+                    discovered_slot_values_text = self.nothing_to_discover_text
+                    discovered_schema_text = self.nothing_to_discover_text
                 seq = [
                     temp.Schema(slot_descriptions=''),
                     temp.Dialogue(speaker_turns=context_text),
@@ -83,19 +101,32 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
             else:
                 schema_split = self.rng.randint(1, len(schema)-1)
                 schema, discovered_schema = schema[:schema_split], schema[schema_split:]
-                schema_text = '\n'.join(f"* {slot.name}: {state.get(slot.name, 'N/A')}" for slot in schema)
-                slot_values_text = '\n'.join(f"{slot.name}: {state.get(slot.name, 'N/A')}" for slot in schema)
-                discovered_schema_text = '\n'.join(
-                    f"* {slot.name}: {state.get(slot.name, 'N/A')}" for slot in discovered_schema)
-                discovered_slot_values_text = '\n'.join(
-                    f"{slot.name}: {state.get(slot.name, 'N/A')}" for slot in discovered_schema)
+                discovered_schema_state = {slot.name: state.get(slot.name) for slot in discovered_schema}
+                state = {slot.name: state.get(slot.name, 'N/A') for slot in schema}
+                discovered_schema_state = {k: v for k, v in discovered_schema_state.items() if v not in ('N/A', None)}
+                schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)
+                slot_values_text = '\n'.join(f"{s}: {v}" for s, v in state.items())
+                if discovered_schema_state:
+                    discovered_slot_values_text = '\n'.join(f"* {s}: {v}" for s, v in discovered_schema_state.items())
+                    discovered_schema_text = '\n'.join(f"* {slot.name}: {slot.description}"
+                        for slot in discovered_schema if slot.name in discovered_schema_state)
+                else:
+                    discovered_slot_values_text = self.nothing_to_discover_text
+                    discovered_schema_text = self.nothing_to_discover_text
                 seq = [
                     temp.Schema(slot_descriptions=schema_text),
                     temp.Dialogue(speaker_turns=context_text),
                     temp.TrackedSlots(slot_values=slot_values_text),
                     temp.DiscoveredSlots(slot_values=discovered_slot_values_text),
                     temp.DiscoveredSchema(slot_descriptions=discovered_schema_text)]
+                if (example_sequence is None
+                    and any(v not in ('N/A', None) for v in discovered_schema_state.values())
+                    and any(v not in ('N/A', None) for v in state.values())
+                ):
+                    example_sequence = seq
             seqs.append(seq)
+        example_tokens = self.model.template_tokenizer.tokenize(example_sequence)
+        print(''.join(f"{ansi.bold if token.is_label else ''}{token.text}{ansi.reset}" for token in example_tokens))
         yield from self.model.train_each_step_each_epoch(seqs)
 
 
@@ -104,6 +135,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
         examples = []
         for dialogue in data:
             for turn in dialogue:
+                if self.ignore_bot_turns and turn.speaker == 'bot': continue
                 schema = turn.schema()
                 context = turn.context()
                 schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)
@@ -115,7 +147,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                     temp.Dialogue(speaker_turns=context_text),
                     temp.TrackedSlots(slot_values=...)]
                 prompts.append(prompt)
-                examples.append((dialogue, turn, {s.name: s for s in schema}))
+                examples.append((dialogue, turn, schema))
         regex = re.compile(self.slot_value_pattern)
         iter_generations = self.model.each_generation(prompts)
         for slot_value_text, (dial, turn, schema) in it.zip_longest(iter_generations, examples):
@@ -140,6 +172,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
         schema_regex = re.compile(self.discovered_slot_pattern)
         for dialogue in data:
             for turn in dialogue:
+                if self.ignore_bot_turns and turn.speaker == 'bot': continue
                 schema = turn.schema()
                 context = turn.context()
                 schema_text = '\n'.join(f"* {slot.name}: {slot.description}" for slot in schema)

@@ -14,6 +14,7 @@ no_prediction = object()
 class DSI_Evaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
     schema_discovery_percent_value_recall_match_threshold: float = 0.5
+    ignore_bot_turns: bool = True
     schema_matching: list[tuple[tuple[str,str], tuple[str,str]]]|None = None
     schema_precision: float = None
     schema_recall: float = None
@@ -46,6 +47,7 @@ class DSI_Evaluation(ez.Config):
         total_values_per_slot = col.defaultdict(int)
         for gold_dialogue, predicted_dialogue in zip(golds, preds):
             for gold_turn, predicted_turn in zip(gold_dialogue, predicted_dialogue):
+                if self.ignore_bot_turns and gold_turn.speaker == 'bot': continue
                 gold_state = {slot_value.slot_name: slot_value.value for slot_value in gold_turn.slot_values
                     if (slot_value.slot_domain, slot_value.slot_name) in gold_schema_slot_set}
                 pred_state = {slot_value.slot_name: slot_value.value for slot_value in predicted_turn.slot_values

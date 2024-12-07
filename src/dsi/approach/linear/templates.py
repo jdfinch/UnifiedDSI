@@ -33,7 +33,7 @@ class DiscoveredSchema(tok.Template):
 
 
 @dc.dataclass
-class DSI_Templates(llama.Llama3Templates):
+class LinearDSI_Templates(llama.Llama3Templates):
     schema: tok.SegmentTemplate|Schema = Schema()
     dialogue: tok.SegmentTemplate | Dialogue = Dialogue()
     tracked_slots: tok.SegmentTemplate | TrackedSlots = TrackedSlots()
@@ -42,7 +42,7 @@ class DSI_Templates(llama.Llama3Templates):
 
 
 if __name__ == '__main__':
-    llt = llama.Llama3TemplateTokenizer(templates=DSI_Templates())
+    llt = llama.Llama3TemplateTokenizer(templates=LinearDSI_Templates())
     lltr = llama.Llama3TemplateTokenizer()
 
     seq = [

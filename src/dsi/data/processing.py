@@ -9,7 +9,23 @@ import copy as cp
 
 
 @dc.dataclass
-class DataProcessingPipeline(ez.Config):
+class RandomProcess(ez.Config):
+    rng_seed: int = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.rng_seed is None:
+            with self.configured.not_configuring():
+                self.rng_seed = rng.randint(1, sys.maxsize)
+        self.rng: rng.Random
+
+    def _set_rng_seed(self, rng_seed):
+        self.rng = rng.Random(rng_seed)
+        return rng_seed
+
+
+@dc.dataclass
+class DataProcessingPipeline(RandomProcess):
     load_path: str = None
     rng_seed: int = None
     processors: ez.MultiConfig['DataProcessor'] = ez.MultiConfig()
@@ -17,19 +33,23 @@ class DataProcessingPipeline(ez.Config):
     def __post_init__(self):
         super().__post_init__()
         self.data: ds.DSTData = None # noqa
-        if self.rng_seed is None:
-            with self.configured.not_configuring():
-                self.rng_seed = rng.randint(1, sys.maxsize)
-        self.rng = rng.Random(self.rng_seed)
         for name, processor in self.processors:
             if isinstance(processor, DataProcessor):
-                processor.rng = self.rng
+                processor.rng_seed = self.rng_seed
+
+    def _set_rng_seed(self, rng_seed):
+        super()._set_rng_seed(rng_seed)
+        if self.configured.initialized:
+            for name, processor in self.processors:
+                if isinstance(processor, DataProcessor) and processor.rng_seed is None:
+                    processor.rng_seed = self.rng_seed
+        return rng_seed
 
     def process(self, data: ds.DSTData = None) -> ds.DSTData:
         if data is None:
             data = ds.DSTData(self.load_path)
         data = [cp.deepcopy(data)]
-        for name, processor in self:
+        for name, processor in self.processors:
             if isinstance(processor, DataProcessor):
                 updated = []
                 for subdata in data:
@@ -45,13 +65,13 @@ class DataProcessingPipeline(ez.Config):
 
 
 @dc.dataclass
-class DataProcessor(ez.Config):
+class DataProcessor(RandomProcess):
     function: str = None
 
     def __post_init__(self):
         super().__post_init__()
-        self.rng: rng.Random = None # noqa
-        self.function = type(self).__name__
+        with self.configured.configuring():
+            self.function = type(self).__name__
 
     def run(self, data: ds.DSTData) -> ds.DSTData | list[ds.DSTData]:
         raise TypeError('Use a subclass of base class DataProcessor')
@@ -63,8 +83,10 @@ class DownsampleDialogues(DataProcessor):
 
     def process(self, data: ds.DSTData) -> ds.DSTData:
         assert isinstance(self.n, int)
-        sample = set(self.rng.sample(data.dialogues, self.n))
+        sample = set(self.rng.sample(list(data.dialogues), self.n))
         data.dialogues = {k: v for k, v in data.dialogues.items() if k in sample}
+        data.turns = {k: v for k,v in data.turns.items() if v.dialogue_id in sample}
+        data.slot_values = {k: v for k,v in data.slot_values.items() if v.turn_dialogue_id in sample}
         data.relink()
         return data
 
@@ -102,24 +124,24 @@ class FillNegatives(DataProcessor):
     negative_symbol: str|None = 'N/A'
 
     def process(self, data: ds.DSTData) -> ds.DSTData:
-        negative_slots = list(data.slots)
-        negative_slots_set = set(negative_slots)
         for dialogue in data.dialogues.values():
             for turn in dialogue.turns:
-                if isinstance(self.max_negatives, int):
-                    slots = set(self.rng.sample(negative_slots, min(self.max_negatives, len(negative_slots))))
-                else:
-                    slots = negative_slots_set
-                turn_slots = {(slot.domain, slot.name) for slot in turn.slots()}
-                missing = slots - turn_slots
-                for slot_domain, slot_name in missing:
+                negatives = [slot for slot in turn.schema() if not any(
+                    slot is slot_value.slot for slot_value in turn.slot_values
+                        if slot_value.value not in ('N/A', None)
+                )]
+                if not negatives:
+                    continue
+                elif isinstance(self.max_negatives, int):
+                    negatives = set(self.rng.sample(negatives, min(self.max_negatives, len(negatives))))
+                for slot in negatives:
                     slot_value = ds.SlotValue(
                         turn_dialogue_id=dialogue.id,
                         turn_index=turn.index,
-                        slot_domain=slot_domain,
-                        slot_name=slot_name,
-                        value=None)
-                    data.slot_values[dialogue.id, turn.index, slot_domain, slot_name] = slot_value
+                        slot_domain=slot.domain,
+                        slot_name=slot.name,
+                        value='N/A')
+                    data.slot_values[dialogue.id, turn.index, slot.domain, slot.name] = slot_value
         data.relink()
         return data
 
@@ -198,6 +220,24 @@ class MapLabels(DataProcessor):
     def process(self, data: ds.DSTData) -> ds.DSTData:
         for slot_value in data.slot_values.values():
             slot_value.value = self.label_map.get(slot_value.value, slot_value.value)
+        return data
+
+
+@dc.dataclass
+class EnableAllDomainsWithinEachDialogue(DataProcessor):
+
+    def process(self, data: ds.DSTData) -> ds.DSTData:
+        for turn in data.turns.values():
+            turn.domains = list(turn.dialogue.domains())
+        return data
+
+
+@dc.dataclass
+class EnableFullSchema(DataProcessor):
+
+    def process(self, data: ds.DSTData) -> ds.DSTData:
+        for turn in data.turns.values():
+            turn.domains = None
         return data
 
 

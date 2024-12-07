@@ -1,4 +1,5 @@
 
+from __future__ import annotations
 
 import random as rng
 import sys
@@ -14,16 +15,20 @@ import dsi.eval.dst_eval as dst_eval
 import dsi.eval.dsi_eval as dsi_eval
 import dsi.approach as app
 
+import language_model.llama3 as llama
+import language_model.tokens as tok
+
 
 @dc.dataclass
 class ExperimentConfig(ez.Config):
-    name: str = ez.denominate
+    name: str = lambda: ez.denominate()
     path: str = None
     description: str = ''
     rng_seed: int = None
     train_data_pipe: dp.DataProcessingPipeline | None = dp.DataProcessingPipeline(
         processors=ez.MultiConfig[dp.DataProcessor](
             downsample=dp.DownsampleDialogues(n=2),
+            enable_multi_domain=dp.EnableAllDomainsWithinEachDialogue(),
             fill_negatives=dp.FillNegatives(),
         )
     )
@@ -51,7 +56,7 @@ class ExperimentConfig(ez.Config):
         )
     )
     """Data processing that gets applied only to evaluation data when evaluating during training."""
-    approach: app.LinearDSI = app.LinearDSIConfig()
+    approach: app.LinearDSIConfig = app.LinearDSIConfig()
     eval_every_n_steps: int|None = None
     eval_every_epoch: bool = True
     criterion_for_best_model: tuple[str, str]|None = None
@@ -68,15 +73,19 @@ class ExperimentConfig(ez.Config):
         if self.rng_seed is None:
             self.rng_seed = rng.randint(1, sys.maxsize)
         self.rng = rng.Random(self.rng_seed)
-        for data_pipe in (self.train_data_pipe, self.dst_eval_data, self.dsi_eval_data):
-            if not data_pipe.configured.has.rng_seed:
-                data_pipe.rng_seed = self.rng_seed
+        for _, eval in [*self.validations, *self.evaluations]:
+            if not eval.pipe.configured.has.rng_seed:
+                eval.pipe.rng_seed = self.rng_seed
+        self.train_data_pipe.rng_seed = self.rng_seed
+        self.approach.rng_seed = self.rng_seed
 
 @dc.dataclass
-class Experiment(ExperimentConfig):
+class Experiment(ez.ImplementsConfig, ExperimentConfig):
+
+    approach: app.LinearDSIConfig = app.LinearDSIConfig()
+
     def __post_init__(self):
         super().__post_init__()
-        self.approach = ez.construct_implementation_of(self.approach)
         if self.train_data_pipe is not None:
             self.train()
         else:
@@ -125,4 +134,34 @@ if __name__ == '__main__':
         Experiment(base=pl.Path(experiment_path)/'experiment.json')
         quit()
 
-    Experiment()
+    dsi_config = app.LinearDSI(model=llama.Llama3Config(template_tokenizer=llama.Llama3TemplateTokenizerConfig(
+        max_length=1024,
+    )))
+
+    ex = Experiment(
+        rng_seed=42,
+        train_data_pipe=dp.DataProcessingPipeline(load_path='data/toy/valid'),
+        validations=ez.MultiConfig(
+            train=dst_eval.DST_Evaluation(
+                pipe=dp.DataProcessingPipeline(
+                    load_path='data/toy/valid'
+                )
+            ),
+            valid=dst_eval.DST_Evaluation(
+                pipe=dp.DataProcessingPipeline(
+                    load_path='data/toy/valid'
+                )
+            )
+        ),
+        evaluations=ez.MultiConfig(),
+        approach=app.LinearDSI(
+            model=llama.Llama3Config(
+                template_tokenizer=llama.Llama3TemplateTokenizerConfig(
+                    max_length=1024,
+                )
+            )
+        )
+    )
+
+    print(ex.configured.json())
+

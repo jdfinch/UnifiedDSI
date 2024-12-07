@@ -12,6 +12,7 @@ no_prediction = object()
 
 class DST_PerDomainEvaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
+    ignore_bot_turns: bool = True
     joint_goal_accuracies: dict[str, float] = {}
     slot_accuracies: dict[str, float] = {}
     slot_precisions: dict[str, float] = {}
@@ -30,7 +31,7 @@ class DST_PerDomainEvaluation(ez.Config):
         for domain_data in dp.SplitDomains().process(self.pipe.data):
             domain, = domain_data.domains()
             domains[domain] = domains
-            metrics = DST_Evaluation().eval(approach, domain_data)
+            metrics = DST_Evaluation(ignore_bot_turns=self.ignore_bot_turns).eval(approach, domain_data)
             self.joint_goal_accuracies[domain] = metrics.joint_goal_accuracy
             self.slot_accuracies[domain] = metrics.slot_accuracy
             self.slot_precisions[domain] = metrics.slot_precision
@@ -54,6 +55,7 @@ class DST_PerDomainEvaluation(ez.Config):
 @dc.dataclass
 class DST_Evaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
+    ignore_bot_turns: bool = True
     joint_goal_accuracy: float = None
     slot_accuracy: float = None
     slot_precision: float = None
@@ -79,6 +81,7 @@ class DST_Evaluation(ez.Config):
         correct_turns = 0
         for gold_dialogue, pred_dialogue in zip(golds, preds):
             for gold_turn, pred_turn in zip(gold_dialogue, pred_dialogue):
+                if self.ignore_bot_turns and gold_turn.speaker == 'bot': continue
                 total_turns += 1
                 schema = gold_turn.schema()
                 gold_state = {slot_value.slot_name: slot_value.value for slot_value in gold_turn.slot_values}
@@ -97,6 +100,7 @@ class DST_Evaluation(ez.Config):
         total_slots, correct_slots = 0, 0
         for gold_d, pred_d in zip(golds, preds):
             for gold_t, pred_t in zip(gold_d, pred_d):
+                if self.ignore_bot_turns and gold_t.speaker == 'bot': continue
                 schema = gold_t.schema()
                 gold_state = {sv.slot_name: sv.value for sv in gold_t.slot_values}
                 pred_state = {sv.slot_name: sv.value for sv in pred_t.slot_values}
@@ -112,6 +116,7 @@ class DST_Evaluation(ez.Config):
         total_predicted, total_gold, correct_slots = 0, 0, 0
         for gold_dialogue, predicted_dialogue in zip(golds, preds):
             for gold_turn, predicted_turn in zip(gold_dialogue, predicted_dialogue):
+                if self.ignore_bot_turns and gold_turn.speaker == 'bot': continue
                 schema = gold_turn.schema()
                 gold_state = {slot_value.slot_name: slot_value.value for slot_value in gold_turn.slot_values}
                 predicted_state = {slot_value.slot_name: slot_value.value for slot_value in predicted_turn.slot_values}
