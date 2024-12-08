@@ -41,8 +41,9 @@ class DataProcessingPipeline(RandomProcess):
         super()._set_rng_seed(rng_seed)
         if self.configured.initialized:
             for name, processor in self.processors:
-                if isinstance(processor, DataProcessor) and processor.rng_seed is None:
-                    processor.rng_seed = self.rng_seed
+                if isinstance(processor, DataProcessor) and not processor.configured.has.rng_seed:
+                    with processor.configured.not_configuring():
+                        processor.rng_seed = rng_seed
         return rng_seed
 
     def process(self, data: ds.DSTData = None) -> ds.DSTData:
@@ -79,9 +80,10 @@ class DataProcessor(RandomProcess):
 
 @dc.dataclass
 class DownsampleDialogues(DataProcessor):
-    n: int = None
+    n: int|None = None
 
     def process(self, data: ds.DSTData) -> ds.DSTData:
+        if self.n is None: return data
         assert isinstance(self.n, int)
         sample = set(self.rng.sample(list(data.dialogues), self.n))
         data.dialogues = {k: v for k, v in data.dialogues.items() if k in sample}

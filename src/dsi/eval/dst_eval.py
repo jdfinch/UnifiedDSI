@@ -1,7 +1,7 @@
 import ezpyzy as ez
 import dataclasses as dc
 import dsi.data.structure as ds
-import collections as col
+import random as rng
 import copy as cp
 
 import dsi.data.processing as dp
@@ -13,6 +13,7 @@ no_prediction = object()
 class DST_PerDomainEvaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
     ignore_bot_turns: bool = True
+    num_kept_examples: int = 0
     joint_goal_accuracies: dict[str, float] = {}
     slot_accuracies: dict[str, float] = {}
     slot_precisions: dict[str, float] = {}
@@ -24,14 +25,29 @@ class DST_PerDomainEvaluation(ez.Config):
     mean_slot_recall: float = None
     mean_slot_f1: float = None
 
+    def __post_init__(self):
+        super().__post_init__()
+        self.examples = {} # (dialogue_id, turn_index) -> str example
+
+    def __str__(self):
+        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains())} ({len(self.pipe.data.turns)} turns)"
+    __repr__=__str__
+
     def eval(self, approach):
         if self.pipe.data is None:
             self.pipe.process()
+        if self.num_kept_examples > 0:
+            self.examples = dict.fromkeys(self.rng.sample(
+                [turn_id for turn_id, turn in self.pipe.data.turns.items()
+                    if not self.ignore_bot_turns or turn.speaker != 'bot'],
+                min(len(self.pipe.data.turns), self.num_kept_examples)))
         domains = {}
-        for domain_data in dp.SplitDomains().process(self.pipe.data):
+        for i, domain_data in enumerate(dp.SplitDomains().process(self.pipe.data)):
             domain, = domain_data.domains()
             domains[domain] = domains
-            metrics = DST_Evaluation(ignore_bot_turns=self.ignore_bot_turns).eval(approach, domain_data)
+            domain_evaluation = DST_Evaluation(ignore_bot_turns=self.ignore_bot_turns)
+            domain_evaluation.examples = self.examples
+            metrics = domain_evaluation.eval(approach, domain_data)
             self.joint_goal_accuracies[domain] = metrics.joint_goal_accuracy
             self.slot_accuracies[domain] = metrics.slot_accuracy
             self.slot_precisions[domain] = metrics.slot_precision
@@ -56,17 +72,33 @@ class DST_PerDomainEvaluation(ez.Config):
 class DST_Evaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
     ignore_bot_turns: bool = True
+    num_kept_examples: int = 0
     joint_goal_accuracy: float = None
     slot_accuracy: float = None
     slot_precision: float = None
     slot_recall: float = None
     slot_f1: float = None
 
+    def __post_init__(self):
+        super().__post_init__()
+        self.rng = rng.Random()
+        self.examples = {} # (dialogue_id, turn_index) -> str example
+
+    def __str__(self):
+        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains())} ({len(self.pipe.data.turns)} turns)"
+    __repr__=__str__
+
     def eval(self, approach, golds: ds.DSTData = None):
         self.pipe.process(data=golds)
         self.pipe.data = dp.FillNegatives().process(self.pipe.data)
         preds = cp.deepcopy(self.pipe.data)
         preds = dp.RemoveLabels().process(preds)
+        if self.num_kept_examples > 0:
+            self.examples = dict.fromkeys(self.rng.sample(
+                [turn_id for turn_id, turn in self.pipe.data.turns.items()
+                    if not self.ignore_bot_turns or turn.speaker != 'bot'],
+                min(len(self.pipe.data.turns), self.num_kept_examples)))
+            approach.examples = self.examples
         approach.track(preds)
         self.joint_goal_accuracy = self.eval_joint_goal_accuracy(self.pipe.data, preds)
         self.slot_accuracy = self.eval_slot_accuracy(self.pipe.data, preds)
@@ -79,8 +111,8 @@ class DST_Evaluation(ez.Config):
         assert len(golds.turns) == len(preds.turns)
         total_turns = 0
         correct_turns = 0
-        for gold_dialogue, pred_dialogue in zip(golds, preds):
-            for gold_turn, pred_turn in zip(gold_dialogue, pred_dialogue):
+        for i, (gold_dialogue, pred_dialogue) in enumerate(zip(golds, preds)):
+            for j, (gold_turn, pred_turn) in enumerate(zip(gold_dialogue, pred_dialogue)):
                 if self.ignore_bot_turns and gold_turn.speaker == 'bot': continue
                 total_turns += 1
                 schema = gold_turn.schema()
@@ -88,6 +120,10 @@ class DST_Evaluation(ez.Config):
                 pred_state = {slot_value.slot_name: slot_value.value for slot_value in pred_turn.slot_values}
                 gold_slot_values = {slot.name: gold_state[slot.name] for slot in schema}
                 pred_slot_values = {slot.name: pred_state.get(slot.name, no_prediction) for slot in schema}
+                if (example_key:=(gold_turn.dialogue_id, gold_turn.index)) in self.examples:
+                    example_state = '\n'.join(f"{s}: {p}" if p == l else f"{s}: {p}  X {l}"
+                        for (s, l), (_, p) in zip(gold_slot_values.items(), pred_slot_values.items()))
+                    self.examples[example_key] = f"{example_state}\n\n{self.examples[example_key]}"
                 if gold_slot_values == pred_slot_values:
                     correct_turns += 1
         if total_turns == 0:

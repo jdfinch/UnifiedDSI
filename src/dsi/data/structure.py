@@ -61,7 +61,6 @@ class Turn:
     def add_slot(self, slot: 'Slot'):
         assert slot.name is not None
         assert slot.domain is not None
-        assert self.domains is None or slot.domain in self.domains
         self.dialogue.data.slots[slot.domain, slot.name] = slot
 
 
