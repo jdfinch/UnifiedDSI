@@ -19,17 +19,17 @@ class Dialogue(tok.Template):
 @dc.dataclass
 class TrackedSlots(tok.Template):
     template = f"{llama.RoleHeader('assistant')}# Key Information Values\n<slot_values>"
-    slot_values: tok.Slot = tok.Output(max=64)
+    slot_values: tok.Slot = tok.Output(max=256)
 
 @dc.dataclass
 class DiscoveredSlots(tok.Template):
     template = f"{llama.User('Identify additional Key Information from the Dialogue that is NOT yet covered by the above Key Information Types and Key Information Values.')}{llama.RoleHeader('assistant')}# Additional Key Information\n<slot_values>"
-    slot_values: tok.Slot = tok.Output(suffix='\n\n', trunc_text='...\n\n', max=64)
+    slot_values: tok.Slot = tok.Output(suffix='\n\n', trunc_text='...\n\n', max=256)
 
 @dc.dataclass
 class DiscoveredSchema(tok.Template):
     template = "# Additional Key Information Types\n<slot_descriptions>"
-    slot_descriptions: tok.Slot = tok.Output(max=128)
+    slot_descriptions: tok.Slot = tok.Output(max=512)
 
 
 @dc.dataclass

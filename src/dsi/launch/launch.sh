@@ -10,4 +10,4 @@ export XDG_CACHE_HOME="$HF_HOME"
 
 export PYTHONPATH="ex/$1/src"
 
-$PATHPREFIX/$USER/miniconda3/envs/dsi/bin/python "ex/$1/src/dsi/experiment/experiment.py" "$1"
+$PATHPREFIX/$USER/miniconda3/envs/UnifiedDSI/bin/python "ex/$1/src/dsi/experiment/experiment.py" "$1"

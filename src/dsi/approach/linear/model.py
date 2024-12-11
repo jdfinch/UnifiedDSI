@@ -83,11 +83,13 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                     temp.DiscoveredSlots(slot_values=self.nothing_to_discover_text),
                     temp.DiscoveredSchema(slot_descriptions=self.nothing_to_discover_text)]
             elif empty_schema:
-                discovered_schema_state = {slot.name: state.get(slot.name) for slot in schema}
+                discovered_schema = schema
+                discovered_schema_state = {slot.name: state.get(slot.name) for slot in discovered_schema}
+                discovered_schema_state = {k: v for k, v in discovered_schema_state.items() if v not in ('N/A', None)}
                 if discovered_schema_state:
                     discovered_slot_values_text = '\n'.join(f"* {s}: {v}" for s, v in discovered_schema_state.items())
                     discovered_schema_text = '\n'.join(f"* {slot.name}: {slot.description}"
-                        for slot in schema if slot.name in discovered_schema_state)
+                        for slot in discovered_schema if slot.name in discovered_schema_state)
                 else:
                     discovered_slot_values_text = self.nothing_to_discover_text
                     discovered_schema_text = self.nothing_to_discover_text
@@ -145,7 +147,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
         for slot_value_text, (dial, turn, schema, prompt) in zip(iter_generations, examples):
             example_index = (turn.dialogue_id, turn.index)
             if example_index in self.examples:
-                example_str = ''.join(str(s) for s in prompt)
+                example_str = self.model.template_tokenizer.tokenize(prompt).text()
                 self.examples[example_index] = example_str
             state = {}
             for match in regex.finditer(slot_value_text):
@@ -226,7 +228,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                     turn.add_slot_value(slot_value)
             example_index = (turn.dialogue_id, turn.index)
             if example_index in self.examples:
-                example_str = ''.join(str(s) for s in prompt)
+                example_str = self.model.template_tokenizer.tokenize(prompt).text()
                 self.examples[example_index] = example_str
         self.model.show_progress = True
 

@@ -26,7 +26,7 @@ class RandomProcess(ez.Config):
 
 @dc.dataclass
 class DataProcessingPipeline(RandomProcess):
-    load_path: str = None
+    load_path: str|tuple[str] = None
     rng_seed: int = None
     processors: ez.MultiConfig['DataProcessor'] = ez.MultiConfig()
 
@@ -48,7 +48,13 @@ class DataProcessingPipeline(RandomProcess):
 
     def process(self, data: ds.DSTData = None) -> ds.DSTData:
         if data is None:
-            data = ds.DSTData(self.load_path)
+            if isinstance(self.load_path, str):
+                data = ds.DSTData(self.load_path)
+            elif isinstance(self.load_path, (tuple, list)):
+                datas = [ds.DSTData(path) for path in self.load_path]
+                data = Concatenate().process(datas)
+            else:
+                raise ValueError(f"self.load_path must be str or tuple of str specifying path of data to load, got {self.load_path}")
         data = [cp.deepcopy(data)]
         for name, processor in self.processors:
             if isinstance(processor, DataProcessor):
@@ -170,12 +176,23 @@ class Concatenate(DataProcessor):
 @dc.dataclass
 class SelectDomains(DataProcessor):
     domains: list[str] = None
+    including: bool = True
+    filter_dialogues: bool = True
 
     def process(self, data: ds.DSTData) -> ds.DSTData:
         assert self.domains is not None
         domains_set = set(self.domains)
+        if not self.including:
+            domains_set = set(data.domains()) - domains_set
+        if self.filter_dialogues:
+            data.dialogues = {k:v for k,v in data.dialogues.items() if set(v.domains()).issubset(domains_set)}
+            data.turns = {k:v for k,v in data.turns.items() if v.dialogue_id in data.dialogues}
+            data.slot_values = {k:v for k,v in data.slot_values.items()
+                if (v.turn_dialogue_id, v.turn_index) in data.turns}
         data.slots = {k: v for k, v in data.slots.items() if v.domain in domains_set}
         data.slot_values = {k: v for k, v in data.slot_values.items() if v.slot_domain in domains_set}
+        for turn in data.turns.values():
+            turn.domains = [d for d in turn.domains if d in domains_set]
         data.relink()
         return data
 
@@ -222,6 +239,38 @@ class MapLabels(DataProcessor):
     def process(self, data: ds.DSTData) -> ds.DSTData:
         for slot_value in data.slot_values.values():
             slot_value.value = self.label_map.get(slot_value.value, slot_value.value)
+        return data
+
+
+@dc.dataclass
+class StandardizeSlotNames(DataProcessor):
+    strip_non_alpha: bool = True
+    underscore_to_space: bool = True
+    camelcase_to_space: bool = True
+
+    def process(self, data: ds.DSTData) -> ds.DSTData:
+        for slot in data.slots.values():
+            slot_name = f"{slot.domain} {slot.name}"
+            if self.underscore_to_space:
+                slot_name = slot_name.replace('_', ' ')
+            if self.strip_non_alpha:
+                slot_name = ''.join(c for c in slot_name if c.isalpha() or c == ' ')
+                slot_name = slot_name.replace('  ', ' ')
+            if self.camelcase_to_space:
+                chars = [slot_name[:1]]
+                for i, c in enumerate(slot_name[1:], start=1):
+                    if c.isupper() and slot_name[i-1].islower():
+                        chars.extend((' ', c))
+                    else:
+                        chars.append(c)
+                slot_name = ''.join(chars)
+            slot.name = slot_name
+        for slot_value in data.slot_values.values():
+            slot_value.slot_name = slot_value.slot.name
+        data.slots = {(slot.domain, slot.name): slot for slot in data.slots.values()}
+        data.slot_values = {(sv.turn_dialogue_id, sv.turn_index, sv.slot_domain, sv.slot_name): sv
+            for sv in data.slot_values.values()}
+        data.relink()
         return data
 
 

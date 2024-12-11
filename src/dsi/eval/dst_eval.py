@@ -116,6 +116,7 @@ class DST_Evaluation(ez.Config):
                 if self.ignore_bot_turns and gold_turn.speaker == 'bot': continue
                 total_turns += 1
                 schema = gold_turn.schema()
+                if not schema: continue
                 gold_state = {slot_value.slot_name: slot_value.value for slot_value in gold_turn.slot_values}
                 pred_state = {slot_value.slot_name: slot_value.value for slot_value in pred_turn.slot_values}
                 gold_slot_values = {slot.name: gold_state[slot.name] for slot in schema}
