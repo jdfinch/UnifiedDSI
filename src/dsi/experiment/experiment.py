@@ -8,12 +8,14 @@ import dataclasses as dc
 import ezpyzy as ez
 import copy as cp
 import os
+import contextlib as cl
 
 import dsi.data.structure as ds
 import dsi.data.processing as dp
 import dsi.eval.dst_eval as dst_eval
 import dsi.eval.dsi_eval as dsi_eval
 import dsi.approach as app
+import dsi.utils.hardware_metrics as hw
 
 import language_model.generate as gen
 import language_model.llama3 as llama
@@ -36,6 +38,7 @@ class ExperimentConfig(ez.Config):
             fill_negatives=dp.FillNegatives(),
         )
     )
+    training_perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
     validations: ez.MultiConfig[
         dst_eval.DST_Evaluation|dst_eval.DST_PerDomainEvaluation|dsi_eval.DSI_Evaluation
     ]|None = ez.MultiConfig()
@@ -44,7 +47,7 @@ class ExperimentConfig(ez.Config):
     ]|None = ez.MultiConfig()
     """Data processing that gets applied only to evaluation data when evaluating during training."""
     approach: app.LinearDSIConfig = app.LinearDSIConfig()
-    eval_every_n_steps: int|None = None
+    eval_every_n_steps: int|None|list[tuple[int,int]] = None
     eval_every_epoch: bool = True
     criterion_for_best_model: tuple[str, str]|None = None
     """Which evaluation (attr name) and metric (attr name) to use to determine which model is best."""
@@ -97,14 +100,19 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
     def train(self):
         self.train_data_pipe.process()
         for epoch, steps in enumerate(self.approach.train(self.train_data_pipe.data), start=1):
+            training_performance_tracker = cl.nullcontext()
             if epoch == 1:
                 training_examples = [''.join(str(s) for s in e) for e in self.approach.model.training.examples]
                 self.training_examples = (f"\n{'='*100}\nTraining\n{'='*100}" +
                     f"\n{'.'*100}\n".join(example for example in training_examples))
                 print(self.training_examples)
-            for step, ppl in enumerate(steps, start=1):
-                if self.eval_every_n_steps is not None and step % self.eval_every_n_steps == 0:
-                    self.validate()
+                training_performance_tracker = self.training_perf_metrics.track()
+            with training_performance_tracker:
+                for step, ppl in enumerate(steps, start=1):
+                    if (isinstance(self.eval_every_n_steps, int) and step % self.eval_every_n_steps == 0
+                        or isinstance (self.eval_every_n_steps, list) and (epoch, step) in self.eval_every_n_steps
+                    ):
+                        self.validate()
             if self.eval_every_epoch:
                 self.validate()
         if self.best_model_epoch_step:
@@ -117,9 +125,17 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
         elif not self.eval_every_epoch and not self.eval_every_n_steps:
             self.validate()
 
+    def current_path(self):
+        if self.approach.model.training:
+            return (pl.Path(self.path)/
+                f"{self.approach.model.training.current_epoch}-{self.approach.model.training.current_step}")
+        else:
+            return pl.Path(self.path)
+
     def _eval(self, which):
         self.evaluation_examples = []
         for name, evaluation in which:
+            evaluation.pred_save_path = str(self.current_path()/name)
             evaluation.eval(self.approach)
             self.evaluation_examples.append(f"\n{'='*100}\n{evaluation}\n{'='*100}\n" +
                 f"\n{'.'*100}\n".join(example for example in evaluation.examples.values()))
@@ -158,7 +174,7 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
 
 if __name__ == '__main__':
 
-    ####### FOR SLURM >:o #######
+    ####### FOR SLURM >:o ######################################################################
     import traceback as tb
     if len(sys.argv) > 1:
         experiment_name = sys.argv[1]
@@ -172,32 +188,34 @@ if __name__ == '__main__':
         quit()
 
 
-    ####### FOR LOCAL |:D #######
+    ####### FOR DEBUG  :D ######################################################################
 
     sgd_training_domains = [
-        "Banks_1", "Buses_1", "Buses_2", "Calendar_1", "Events_1", "Events_2",
-        "Flights_1", "Flights_2", "Homes_1",
-        "Media_1", "Movies_1", "Music_1", "Music_2", "RentalCars_1", "RentalCars_2",
-        "Services_1", "Services_2",
-        "Services_3", "Weather_1"
+        "Banks_1", "Buses_1", "Buses_2", "Calendar_1", "Events_1", "Events_2", "Events_3",
+        "Flights_1", "Flights_2", "Flights_3", "Flights_4", "Homes_1",
+        "Media_1", "Media_2", "Media_3", "Movies_1", "Music_1", "Music_2", "Music_3"
+        "RentalCars_1", "RentalCars_2", "RentalCars_3"
+        "Services_1", "Services_2", "Services_3", "Services_4", "Weather_1",
+        "Alarm_1", "Messaging_1", "Payment_1"
     ]
 
     sgd_testing_domains = [
         "Hotels_1", "Hotels_2", "Hotels_3", "Hotels_4",
         "Restaurants_1", "Restaurants_2",
         "RideSharing_1", "RideSharing_2",
-        "Travel_1"
+        "Travel_1", # attractions
+        "Trains_1"
     ]
 
     ex = Experiment(
         rng_seed=42,
-        criterion_for_best_model=('dst_valid', 'slot_f1'),
+        criterion_for_best_model=('dst_valid', 'mean_joint_goal_accuracy'),
         eval_every_n_steps=100,
         train_data_pipe=dp.DataProcessingPipeline(
             load_path='data/sgd/valid',
             processors=ez.MultiConfig(
                 domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-                downsample=dp.DownsampleDialogues(n=100),
+                downsample=dp.DownsampleDialogues(n=50),
                 multi_domain=dp.EnableAllDomainsWithinEachDialogue(),
                 standardize_slots=dp.StandardizeSlotNames(),
             )
@@ -208,22 +226,35 @@ if __name__ == '__main__':
                     load_path='data/sgd/valid',
                     processors=ez.MultiConfig(
                         domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-                        downsample=dp.DownsampleDialogues(n=10),
+                        downsample=dp.DownsampleDialogues(n=5),
                         standardize_slots=dp.StandardizeSlotNames(),
                     )
                 ),
                 num_kept_examples=5,
             ),
-            dst_valid=dst_eval.DST_Evaluation(
+            dst_valid=dst_eval.DST_PerDomainEvaluation(
                 pipe=dp.DataProcessingPipeline(
                     load_path='data/sgd/valid',
                     processors=ez.MultiConfig(
                         domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                        downsample=dp.DownsampleDialogues(n=10),
+                        downsample=dp.DownsampleDialogues(n=5),
                         standardize_slots=dp.StandardizeSlotNames(),
                     )
                 ),
                 num_kept_examples=5,
+                pred_save_path='auto'
+            ),
+            discover=dsi_eval.DSI_Evaluation(
+                pipe=dp.DataProcessingPipeline(
+                    load_path='data/sgd/valid',
+                    processors=ez.MultiConfig(
+                        domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
+                        downsample=dp.DownsampleDialogues(n=5),
+                        standardize_slots=dp.StandardizeSlotNames(),
+                    )
+                ),
+                num_kept_examples=3,
+                pred_save_path='auto',
             ),
         ),
         evaluations=ez.MultiConfig(
@@ -232,26 +263,28 @@ if __name__ == '__main__':
                     load_path='data/sgd/valid',
                     processors=ez.MultiConfig(
                         domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                        downsample=dp.DownsampleDialogues(n=1),
+                        downsample=dp.DownsampleDialogues(n=10),
                         standardize_slots=dp.StandardizeSlotNames(),
                     )
                 ),
                 num_kept_examples=3,
+                pred_save_path='auto',
             ),
         ),
-        approach=app.LinearDSI(
+        approach=app.LinearDSIConfig(
             model=llama.Llama3Config(
                 model_base="meta-llama/Llama-3.2-1B-Instruct",
+                adapters=ez.MultiConfig(adapter=lm.LoRA(rank=1)),
                 template_tokenizer=llama.Llama3TemplateTokenizerConfig(
                     max_length=1024
                 ),
-                generation=gen.Greedy(batch_size=8, num_kept_examples=3),
+                generation=gen.Greedy(batch_size=1, num_kept_examples=3),
                 training=lm.Training(
-                    optimizer=lm.Adam(learning_rate=1e-3, weight_decay=1e-2),
-                    scheduler=lm.LinearWarmupSchedule(num_warmup_steps=100),
-                    batch_size=16,
+                    optimizer=lm.Adam(learning_rate=1e-3, weight_decay=0),
+                    scheduler=lm.LinearWarmupSchedule(num_warmup_steps=10),
+                    batch_size=8,
                     physical_batch_size=1,
-                    epochs=5,
+                    epochs=2,
                     num_kept_examples=4
                 )
             )

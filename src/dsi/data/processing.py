@@ -247,10 +247,14 @@ class StandardizeSlotNames(DataProcessor):
     strip_non_alpha: bool = True
     underscore_to_space: bool = True
     camelcase_to_space: bool = True
+    add_domain_name: bool = False
 
     def process(self, data: ds.DSTData) -> ds.DSTData:
         for slot in data.slots.values():
-            slot_name = f"{slot.domain} {slot.name}"
+            if self.add_domain_name:
+                slot_name = f"{slot.domain} {slot.name}"
+            else:
+                slot_name = slot.name
             if self.underscore_to_space:
                 slot_name = slot_name.replace('_', ' ')
             if self.strip_non_alpha:
@@ -268,6 +272,21 @@ class StandardizeSlotNames(DataProcessor):
         for slot_value in data.slot_values.values():
             slot_value.slot_name = slot_value.slot.name
         data.slots = {(slot.domain, slot.name): slot for slot in data.slots.values()}
+        data.slot_values = {(sv.turn_dialogue_id, sv.turn_index, sv.slot_domain, sv.slot_name): sv
+            for sv in data.slot_values.values()}
+        data.relink()
+        return data
+
+
+@dc.dataclass
+class AddDomainNamesToSlotNames(DataProcessor):
+
+    def process(self, data: ds.DSTData) -> ds.DSTData:
+        for slot in data.slots.values():
+            slot.name = f"{slot.domain} {slot.name}".strip()
+        data.slots = {(slot.domain, slot.name) for slot in data.slots.values()}
+        for slot_value in data.slot_values.values():
+            slot_value.slot_name = slot_value.slot.name
         data.slot_values = {(sv.turn_dialogue_id, sv.turn_index, sv.slot_domain, sv.slot_name): sv
             for sv in data.slot_values.values()}
         data.relink()

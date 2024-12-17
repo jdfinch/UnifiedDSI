@@ -23,4 +23,4 @@ pip install xformers torch==2.3.0 --index-url https://download.pytorch.org/whl/c
 echo "!!!! triton --------------------------------------"
 pip install triton==2.1.0 flash-attn==2.6.3 # WTF
 
-pip install setproctitle
+pip install setproctitle fabric

@@ -5,8 +5,10 @@ import dsi.data.structure as ds
 import collections as col
 import copy as cp
 import itertools as it
+import pathlib as pl
 
 import dsi.data.processing as dp
+import dsi.utils.hardware_metrics as hw
 
 import random as rng
 
@@ -19,6 +21,7 @@ class DSI_Evaluation(ez.Config):
     schema_discovery_percent_value_recall_match_threshold: float = 0.5
     ignore_bot_turns: bool = True
     num_kept_examples: int = 0
+    pred_save_path: str|None = None
     schema_matching: list[tuple[tuple[str,str], tuple[str,str]]]|None = None
     schema_precision: float = None
     schema_recall: float = None
@@ -27,6 +30,7 @@ class DSI_Evaluation(ez.Config):
     discovered_value_recall: float = None
     discovered_value_f1: float = None
     discovered_joint_goal_accuracy: float = None
+    perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
 
     def __post_init__(self):
         super().__post_init__()
@@ -38,6 +42,11 @@ class DSI_Evaluation(ez.Config):
     __repr__=__str__
 
     def eval(self, approach):
+        with self.perf_metrics.track():
+            self._eval(approach)
+        return self
+
+    def _eval(self, approach):
         if self.pipe.data is None:
             self.pipe.process()
         self.pipe.data = dp.FillNegatives().process(self.pipe.data)
@@ -50,6 +59,8 @@ class DSI_Evaluation(ez.Config):
                 min(len(self.pipe.data.turns), self.num_kept_examples)))
             approach.examples = self.examples
         approach.infer(preds)
+        if self.pred_save_path:
+            preds.save(self.pred_save_path)
         self.match_discovered_schema(self.pipe.data, preds)
         (self.schema_precision, self.schema_recall, self.schema_f1
         ) = self.eval_discovered_schema_p_r_f1(self.pipe.data, preds)

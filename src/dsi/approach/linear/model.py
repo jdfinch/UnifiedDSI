@@ -210,6 +210,7 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                 slot_name = match.group('slot')
                 description = match.group('description')
                 discovered_schema[slot_name] = description
+            added_to_schema = set()
             for slot_name, description in discovered_schema.items():
                 if slot_name not in state and slot_name in discovered_state:
                     discovered_slot = ds.Slot(
@@ -217,8 +218,9 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
                         name=slot_name,
                         description=description)
                     turn.add_slot(discovered_slot)
+                    added_to_schema.add(slot_name)
             for slot_name, value in discovered_state.items():
-                if slot_name in discovered_schema:
+                if slot_name in added_to_schema:
                     slot_value = ds.SlotValue(
                         turn_dialogue_id=turn.dialogue_id,
                         turn_index=turn.index,

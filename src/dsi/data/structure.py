@@ -45,6 +45,26 @@ class Turn:
     def history(self):
         return self.dialogue.turns[:self.index]
 
+    def state(self):
+        state = {}
+        for slot in self.schema():
+            slot_value_id = (self.dialogue_id, self.index, slot.domain, slot.name)
+            if slot_value_id in self.dialogue.data.slot_values:
+                slot_value = self.dialogue.data.slot_values[slot_value_id]
+                state[slot.domain, slot.name] = slot_value.value
+            else:
+                state[slot.domain, slot.name] = 'N/A'
+        return state
+
+    def state_update(self):
+        history = self.history()
+        state = self.state()
+        if not history: return state
+        previous_state = history[-1].state()
+        no_match = object()
+        update = {k: v for k, v in state.items() if v != previous_state.get(k, no_match)}
+        return update
+
     def add_slot_value(self, slot_value: 'SlotValue'):
         assert slot_value.slot_domain is not None
         assert slot_value.slot_name is not None
@@ -62,6 +82,7 @@ class Turn:
         assert slot.name is not None
         assert slot.domain is not None
         self.dialogue.data.slots[slot.domain, slot.name] = slot
+
 
 
 @dc.dataclass

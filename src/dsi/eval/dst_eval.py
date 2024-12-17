@@ -3,17 +3,21 @@ import dataclasses as dc
 import dsi.data.structure as ds
 import random as rng
 import copy as cp
+import pathlib as pl
 
 import dsi.data.processing as dp
+import dsi.utils.hardware_metrics as hw
 
 
 no_prediction = object()
 
 
+@dc.dataclass
 class DST_PerDomainEvaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
     ignore_bot_turns: bool = True
     num_kept_examples: int = 0
+    pred_save_path: str|None = None
     joint_goal_accuracies: dict[str, float] = {}
     slot_accuracies: dict[str, float] = {}
     slot_precisions: dict[str, float] = {}
@@ -24,16 +28,24 @@ class DST_PerDomainEvaluation(ez.Config):
     mean_slot_precision: float = None
     mean_slot_recall: float = None
     mean_slot_f1: float = None
+    perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
 
     def __post_init__(self):
         super().__post_init__()
         self.examples = {} # (dialogue_id, turn_index) -> str example
+        self.rng = rng.Random()
 
     def __str__(self):
         return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains())} ({len(self.pipe.data.turns)} turns)"
     __repr__=__str__
 
     def eval(self, approach):
+        with self.perf_metrics.track():
+            subevals = self._eval(approach)
+        self.perf_metrics.max_update([subeval.perf_metrics for subeval in subevals])
+        return self
+
+    def _eval(self, approach):
         if self.pipe.data is None:
             self.pipe.process()
         if self.num_kept_examples > 0:
@@ -41,11 +53,20 @@ class DST_PerDomainEvaluation(ez.Config):
                 [turn_id for turn_id, turn in self.pipe.data.turns.items()
                     if not self.ignore_bot_turns or turn.speaker != 'bot'],
                 min(len(self.pipe.data.turns), self.num_kept_examples)))
+        subevaluations = []
         domains = {}
         for i, domain_data in enumerate(dp.SplitDomains().process(self.pipe.data)):
             domain, = domain_data.domains()
             domains[domain] = domains
-            domain_evaluation = DST_Evaluation(ignore_bot_turns=self.ignore_bot_turns)
+            if self.pred_save_path:
+                pred_save_name = ''.join(c for c in domain.replace(' ', '_') if c.isalnum() or c in '_-')
+                sub_pred_save_path = str(pl.Path(self.pred_save_path) / pred_save_name)
+            else:
+                sub_pred_save_path = None
+            domain_evaluation = DST_Evaluation(
+                pipe=dp.DataProcessingPipeline(),
+                ignore_bot_turns=self.ignore_bot_turns, pred_save_path=sub_pred_save_path)
+            subevaluations.append(domain_evaluation)
             domain_evaluation.examples = self.examples
             metrics = domain_evaluation.eval(approach, domain_data)
             self.joint_goal_accuracies[domain] = metrics.joint_goal_accuracy
@@ -66,6 +87,7 @@ class DST_PerDomainEvaluation(ez.Config):
             self.mean_slot_precision = 0.0
             self.mean_slot_recall = 0.0
             self.mean_slot_f1 = 0.0
+        return subevaluations
 
 
 @dc.dataclass
@@ -73,11 +95,13 @@ class DST_Evaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
     ignore_bot_turns: bool = True
     num_kept_examples: int = 0
+    pred_save_path: str|None = None
     joint_goal_accuracy: float = None
     slot_accuracy: float = None
     slot_precision: float = None
     slot_recall: float = None
     slot_f1: float = None
+    perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
 
     def __post_init__(self):
         super().__post_init__()
@@ -89,17 +113,23 @@ class DST_Evaluation(ez.Config):
     __repr__=__str__
 
     def eval(self, approach, golds: ds.DSTData = None):
+        with self.perf_metrics.track():
+            self._eval(approach, golds)
+        return self
+
+    def _eval(self, approach, golds: ds.DSTData = None):
         self.pipe.process(data=golds)
         self.pipe.data = dp.FillNegatives().process(self.pipe.data)
         preds = cp.deepcopy(self.pipe.data)
         preds = dp.RemoveLabels().process(preds)
-        if self.num_kept_examples > 0:
-            self.examples = dict.fromkeys(self.rng.sample(
-                [turn_id for turn_id, turn in self.pipe.data.turns.items()
-                    if not self.ignore_bot_turns or turn.speaker != 'bot'],
-                min(len(self.pipe.data.turns), self.num_kept_examples)))
-            approach.examples = self.examples
+        if self.num_kept_examples > 0 and not self.examples:
+            candidates = [turn_id for turn_id, turn in self.pipe.data.turns.items()
+                    if not self.ignore_bot_turns or turn.speaker != 'bot']
+            self.examples = dict.fromkeys(self.rng.sample(candidates, min(len(candidates), self.num_kept_examples)))
+        approach.examples = self.examples
         approach.track(preds)
+        if self.pred_save_path:
+            preds.save(self.pred_save_path)
         self.joint_goal_accuracy = self.eval_joint_goal_accuracy(self.pipe.data, preds)
         self.slot_accuracy = self.eval_slot_accuracy(self.pipe.data, preds)
         (self.slot_precision, self.slot_recall, self.slot_f1

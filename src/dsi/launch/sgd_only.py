@@ -24,30 +24,31 @@ import language_model as lm
 
 
 sgd_training_domains = [
-    "Banks_1", "Buses_1", "Buses_2", "Calendar_1", "Events_1", "Events_2",
-    "Flights_1", "Flights_2", "Homes_1",
-    "Media_1", "Movies_1", "Music_1", "Music_2", "RentalCars_1", "RentalCars_2",
-    "Services_1", "Services_2",
-    "Services_3", "Weather_1"
+    "Banks_1", "Buses_1", "Buses_2", "Calendar_1", "Events_1", "Events_2", "Events_3",
+    "Flights_1", "Flights_2", "Flights_3", "Flights_4", "Homes_1",
+    "Media_1", "Media_2", "Media_3", "Movies_1", "Music_1", "Music_2", "Music_3"
+    "RentalCars_1", "RentalCars_2", "RentalCars_3"
+    "Services_1", "Services_2", "Services_3", "Services_4", "Weather_1",
+    "Alarm_1", "Messaging_1", "Payment_1"
 ]
 
 sgd_testing_domains = [
     "Hotels_1", "Hotels_2", "Hotels_3", "Hotels_4",
     "Restaurants_1", "Restaurants_2",
     "RideSharing_1", "RideSharing_2",
-    "Travel_1"
+    "Travel_1", # attractions
+    "Trains_1"
 ]
 
 
 experiment = ex.ExperimentConfig(
     rng_seed=42,
-    criterion_for_best_model=('dst_valid', 'slot_f1'),
+    criterion_for_best_model=('dst_valid', 'mean_joint_goal_accuracy'),
     eval_every_n_steps=100,
     train_data_pipe=dp.DataProcessingPipeline(
         load_path='data/sgd/train',
         processors=ez.MultiConfig(
             domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-            # downsample=dp.DownsampleDialogues(n=100),
             multi_domain=dp.EnableAllDomainsWithinEachDialogue(),
             standardize_slots=dp.StandardizeSlotNames(),
         )
@@ -55,16 +56,16 @@ experiment = ex.ExperimentConfig(
     validations=ez.MultiConfig(
         dst_train=dst_eval.DST_Evaluation(
             pipe=dp.DataProcessingPipeline(
-                load_path='data/sgd/train',
+                load_path='data/sgd/valid',
                 processors=ez.MultiConfig(
                     domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-                    downsample=dp.DownsampleDialogues(n=10),
+                    downsample=dp.DownsampleDialogues(n=30),
                     standardize_slots=dp.StandardizeSlotNames(),
                 )
             ),
-            num_kept_examples=5,
+            num_kept_examples=10,
         ),
-        dst_valid=dst_eval.DST_Evaluation(
+        dst_valid=dst_eval.DST_PerDomainEvaluation(
             pipe=dp.DataProcessingPipeline(
                 load_path='data/sgd/valid',
                 processors=ez.MultiConfig(
@@ -73,39 +74,62 @@ experiment = ex.ExperimentConfig(
                     standardize_slots=dp.StandardizeSlotNames(),
                 )
             ),
-            num_kept_examples=5,
+            num_kept_examples=10,
+            pred_save_path='auto'
         ),
-    ),
-    evaluations=ez.MultiConfig(
         discover=dsi_eval.DSI_Evaluation(
             pipe=dp.DataProcessingPipeline(
                 load_path='data/sgd/valid',
                 processors=ez.MultiConfig(
                     domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                    downsample=dp.DownsampleDialogues(n=1),
+                    downsample=dp.DownsampleDialogues(n=10),
                     standardize_slots=dp.StandardizeSlotNames(),
                 )
             ),
-            num_kept_examples=3,
+            num_kept_examples=10,
+            pred_save_path='auto',
+        ),
+    ),
+    evaluations=ez.MultiConfig(
+        dst_valid=dst_eval.DST_PerDomainEvaluation(
+            pipe=dp.DataProcessingPipeline(
+                load_path='data/sgd/valid',
+                processors=ez.MultiConfig(
+                    domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
+                    standardize_slots=dp.StandardizeSlotNames(),
+                )
+            ),
+            num_kept_examples=10,
+            pred_save_path='auto'
+        ),
+        discover=dsi_eval.DSI_Evaluation(
+            pipe=dp.DataProcessingPipeline(
+                load_path='data/sgd/valid',
+                processors=ez.MultiConfig(
+                    domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
+                    downsample=dp.DownsampleDialogues(n=10),
+                    standardize_slots=dp.StandardizeSlotNames(),
+                )
+            ),
+            num_kept_examples=10,
+            pred_save_path='auto',
         ),
     ),
     approach=app.LinearDSIConfig(
         model=llama.Llama3Config(
-            model_base="meta-llama/Llama-3.1-8B-Instruct",
+            model_base="meta-llama/Llama-3.2-1B-Instruct",
+            adapters=None,
             template_tokenizer=llama.Llama3TemplateTokenizerConfig(
                 max_length=1024
             ),
-            adapters=ez.MultiConfig(adapter=lm.LoRA(
-                rank=1, modules=('q_proj', 'v_proj', 'up_proj'),
-            )),
-            generation=gen.Greedy(batch_size=8, num_kept_examples=3),
+            generation=gen.Greedy(batch_size=10, num_kept_examples=3),
             training=lm.Training(
-                optimizer=lm.Adam(learning_rate=1e-3, weight_decay=1e-2),
+                optimizer=lm.Adam(learning_rate=1e-3, weight_decay=0),
                 scheduler=lm.LinearWarmupSchedule(num_warmup_steps=100),
-                batch_size=16,
+                batch_size=64,
                 physical_batch_size=1,
-                epochs=5,
-                num_kept_examples=4
+                epochs=1,
+                num_kept_examples=30
             )
         )
     )
@@ -115,12 +139,27 @@ print(experiment.configured.json())
 
 launch.launch(experiment)
 
+def notes(): return
 ''' Notes
 
 * try qwen
 
-* The training is only registering values in the most recent domain even though all domains are included in the schema presented to the model. This contradicts the evaluation which properly includes all slot values of all schema slots, including domains that have been resolved earlier in the conversation.
+* set up option to save predictions and golds in each evaluation for analysis
+    * splitting correct vs incorrect predictions
+    
+* save timings and usage stats
 
-* make sure slot discovery ALWAYS discovers ALL filled values that are not in the predefined DST schema 
+* add DSI validation
+
+* visualize data
+    * turn context
+    * just turn
+    * state or state update
+    * dialogue
+    * turn DST
+    * turn DSI
+    * schema matching
+    * state comparison
+    
 
 '''
