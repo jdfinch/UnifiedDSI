@@ -66,7 +66,9 @@ class LinearDSI(ez.ImplementsConfig, LinearDSIConfig):
         seqs = []
         for turn, (full_schema, empty_schema) in zip(turns, flags):
             if self.ignore_bot_turns and turn.speaker == 'bot': continue
-            schema = turn.schema()
+            slots_with_train_values = {(sv.slot.domain, sv.slot.name) for sv in turn.slot_values}
+            schema = [slot for slot in turn.schema()
+                if (slot.domain, slot.name) in slots_with_train_values]
             if self.train_shuffle_schema: self.rng.shuffle(schema)
             context = turn.context()
             context_text = '\n'.join(

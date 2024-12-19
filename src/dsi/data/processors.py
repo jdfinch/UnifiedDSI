@@ -25,53 +25,6 @@ class RandomProcess(ez.Config):
 
 
 @dc.dataclass
-class DataProcessingPipeline(RandomProcess):
-    load_path: str|tuple[str] = None
-    rng_seed: int = None
-    processors: ez.MultiConfig['DataProcessor'] = ez.MultiConfig()
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.data: ds.DSTData = None # noqa
-        for name, processor in self.processors:
-            if isinstance(processor, DataProcessor):
-                processor.rng_seed = self.rng_seed
-
-    def _set_rng_seed(self, rng_seed):
-        super()._set_rng_seed(rng_seed)
-        if self.configured.initialized:
-            for name, processor in self.processors:
-                if isinstance(processor, DataProcessor) and not processor.configured.has.rng_seed:
-                    with processor.configured.not_configuring():
-                        processor.rng_seed = rng_seed
-        return rng_seed
-
-    def process(self, data: ds.DSTData = None) -> ds.DSTData:
-        if data is None:
-            if isinstance(self.load_path, str):
-                data = ds.DSTData(self.load_path)
-            elif isinstance(self.load_path, (tuple, list)):
-                datas = [ds.DSTData(path) for path in self.load_path]
-                data = Concatenate().process(datas)
-            else:
-                raise ValueError(f"self.load_path must be str or tuple of str specifying path of data to load, got {self.load_path}")
-        data = [cp.deepcopy(data)]
-        for name, processor in self.processors:
-            if isinstance(processor, DataProcessor):
-                updated = []
-                for subdata in data:
-                    processed_subdata = processor.process(subdata)
-                    if isinstance(processed_subdata, list):
-                        updated.extend(processed_subdata)
-                    else:
-                        updated.append(processed_subdata)
-                data = updated
-        processed, = data
-        self.data = processed
-        return processed
-
-
-@dc.dataclass
 class DataProcessor(RandomProcess):
     function: str = None
 
@@ -128,7 +81,8 @@ class DownsampleSlotValues(DataProcessor):
 
 @dc.dataclass
 class FillNegatives(DataProcessor):
-    max_negatives: int = None
+    max_negatives: int|None = None
+    max_negatives_factor: float|None = None
     negative_symbol: str|None = 'N/A'
 
     def process(self, data: ds.DSTData) -> ds.DSTData:
@@ -140,15 +94,22 @@ class FillNegatives(DataProcessor):
                 )]
                 if not negatives:
                     continue
-                elif isinstance(self.max_negatives, int):
-                    negatives = set(self.rng.sample(negatives, min(self.max_negatives, len(negatives))))
+                num_negatives_cands = []
+                if isinstance(self.max_negatives, int):
+                    num_negatives_cands.append(self.max_negatives)
+                if isinstance(self.max_negatives_factor, float):
+                    num_positives = len(turn.slot_values)
+                    num_negatives_cands.append(num_positives * self.max_negatives_factor)
+                if num_negatives_cands:
+                    num_negatives = min(len(negatives), max(num_negatives_cands))
+                    negatives = self.rng.sample(negatives, num_negatives)
                 for slot in negatives:
                     slot_value = ds.SlotValue(
                         turn_dialogue_id=dialogue.id,
                         turn_index=turn.index,
                         slot_domain=slot.domain,
                         slot_name=slot.name,
-                        value='N/A')
+                        value=self.negative_symbol)
                     data.slot_values[dialogue.id, turn.index, slot.domain, slot.name] = slot_value
         data.relink()
         return data
@@ -204,9 +165,7 @@ class SplitDomains(DataProcessor):
         domain_to_data = {}
         for domain in {slot.domain for slot in data.slots.values()}:
             split_data = cp.deepcopy(data)
-            split_data.slots = {k: v for k, v in data.slots.items() if v.domain == domain}
-            split_data.slot_values = {k: v for k, v in data.slot_values.items() if v.slot_domain == domain}
-            split_data.relink()
+            split_data = SelectDomains(domains=[domain]).process(split_data)
             domain_to_data[domain] = split_data
         return list(domain_to_data.values())
 
@@ -258,6 +217,7 @@ class StandardizeSlotNames(DataProcessor):
             if self.underscore_to_space:
                 slot_name = slot_name.replace('_', ' ')
             if self.strip_non_alpha:
+                slot_name = slot_name.replace('-', ' ')
                 slot_name = ''.join(c for c in slot_name if c.isalpha() or c == ' ')
                 slot_name = slot_name.replace('  ', ' ')
             if self.camelcase_to_space:

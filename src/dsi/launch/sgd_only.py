@@ -9,13 +9,10 @@ import ezpyzy as ez
 import copy as cp
 import os
 
-import dsi.data.structure as ds
-import dsi.data.processing as dp
-import dsi.eval.dst_eval as dst_eval
-import dsi.eval.dsi_eval as dsi_eval
+import dsi.experiment as ex
+import dsi.data.pipelines as dp
 import dsi.approach as app
 import dsi.launch.launch as launch
-import dsi.experiment.experiment as ex
 
 import language_model.generate as gen
 import language_model.llama3 as llama
@@ -43,93 +40,39 @@ sgd_testing_domains = [
 
 experiment = ex.ExperimentConfig(
     rng_seed=42,
-    criterion_for_best_model=('dst_valid', 'mean_joint_goal_accuracy'),
-    eval_every_n_steps=100,
-    train_data_pipe=dp.DataProcessingPipeline(
-        load_path='data/sgd/train',
-        processors=ez.MultiConfig(
-            domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-            multi_domain=dp.EnableAllDomainsWithinEachDialogue(),
-            standardize_slots=dp.StandardizeSlotNames(),
+    criterion_for_best_model=('valid_dst_sgd_resplit', 'mean_joint_goal_accuracy'),
+    validate_every_n_steps=[100, 300, 500, 1000],
+    validate_every_epoch=True,
+    train_sgd_resplit=ex.TrainSGD_Resplit(),
+    valid_dst_sgd_resplit=ex.ValidDST_SGD_Resplit(pipe=dp.DST_PerDomainEvaluationDataPipeline(
+        downsample=dp.DownsampleDialogues(n=30)
+    )),
+    valid_dst_sgd_train_resplit=ex.ValidDST_SGD_TrainResplit(pipe=dp.DST_PerDomainEvaluationDataPipeline(
+        downsample=dp.DownsampleDialogues(n=10)
+    )),
+    valid_dsi_mwoz=ex.ValidDSI_MWOZ(
+        pipe=dp.DSI_EvaluationDataPipeline(
+            downsample=dp.DownsampleDialogues(n=10)
         )
     ),
-    validations=ez.MultiConfig(
-        dst_train=dst_eval.DST_Evaluation(
-            pipe=dp.DataProcessingPipeline(
-                load_path='data/sgd/valid',
-                processors=ez.MultiConfig(
-                    domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-                    downsample=dp.DownsampleDialogues(n=30),
-                    standardize_slots=dp.StandardizeSlotNames(),
-                )
-            ),
-            num_kept_examples=10,
-        ),
-        dst_valid=dst_eval.DST_PerDomainEvaluation(
-            pipe=dp.DataProcessingPipeline(
-                load_path='data/sgd/valid',
-                processors=ez.MultiConfig(
-                    domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                    downsample=dp.DownsampleDialogues(n=100),
-                    standardize_slots=dp.StandardizeSlotNames(),
-                )
-            ),
-            num_kept_examples=10,
-            pred_save_path='auto'
-        ),
-        discover=dsi_eval.DSI_Evaluation(
-            pipe=dp.DataProcessingPipeline(
-                load_path='data/sgd/valid',
-                processors=ez.MultiConfig(
-                    domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                    downsample=dp.DownsampleDialogues(n=10),
-                    standardize_slots=dp.StandardizeSlotNames(),
-                )
-            ),
-            num_kept_examples=10,
-            pred_save_path='auto',
-        ),
-    ),
-    evaluations=ez.MultiConfig(
-        dst_valid=dst_eval.DST_PerDomainEvaluation(
-            pipe=dp.DataProcessingPipeline(
-                load_path='data/sgd/valid',
-                processors=ez.MultiConfig(
-                    domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                    standardize_slots=dp.StandardizeSlotNames(),
-                )
-            ),
-            num_kept_examples=10,
-            pred_save_path='auto'
-        ),
-        discover=dsi_eval.DSI_Evaluation(
-            pipe=dp.DataProcessingPipeline(
-                load_path='data/sgd/valid',
-                processors=ez.MultiConfig(
-                    domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                    downsample=dp.DownsampleDialogues(n=10),
-                    standardize_slots=dp.StandardizeSlotNames(),
-                )
-            ),
-            num_kept_examples=10,
-            pred_save_path='auto',
-        ),
-    ),
+    eval_dst_sgd_resplit=ex.EvalDST_SGD_Resplit(),
+    eval_dsi_mwoz=ex.EvalDSI_MWOZ(pipe=dp.DSI_EvaluationDataPipeline(
+        downsample=dp.DownsampleDialogues(n=10)
+    )),
     approach=app.LinearDSIConfig(
         model=llama.Llama3Config(
             model_base="meta-llama/Llama-3.2-1B-Instruct",
-            adapters=None,
+            adapter=lm.LoRA(rank=1),
             template_tokenizer=llama.Llama3TemplateTokenizerConfig(
-                max_length=1024
-            ),
-            generation=gen.Greedy(batch_size=10, num_kept_examples=3),
+                max_length=1024),
+            generation=gen.Greedy(batch_size=5, num_kept_examples=3),
             training=lm.Training(
                 optimizer=lm.Adam(learning_rate=1e-3, weight_decay=0),
                 scheduler=lm.LinearWarmupSchedule(num_warmup_steps=100),
-                batch_size=64,
-                physical_batch_size=1,
+                batch_size=16,
+                physical_batch_size=8,
                 epochs=1,
-                num_kept_examples=30
+                num_kept_examples=4
             )
         )
     )
@@ -137,29 +80,11 @@ experiment = ex.ExperimentConfig(
 
 print(experiment.configured.json())
 
-launch.launch(experiment)
+# launch.launch(experiment)
 
 def notes(): return
 ''' Notes
 
-* try qwen
 
-* set up option to save predictions and golds in each evaluation for analysis
-    * splitting correct vs incorrect predictions
-    
-* save timings and usage stats
-
-* add DSI validation
-
-* visualize data
-    * turn context
-    * just turn
-    * state or state update
-    * dialogue
-    * turn DST
-    * turn DSI
-    * schema matching
-    * state comparison
-    
 
 '''

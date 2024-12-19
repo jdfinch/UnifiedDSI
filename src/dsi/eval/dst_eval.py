@@ -5,7 +5,7 @@ import random as rng
 import copy as cp
 import pathlib as pl
 
-import dsi.data.processing as dp
+import dsi.data.pipelines as dp
 import dsi.utils.hardware_metrics as hw
 
 
@@ -14,7 +14,7 @@ no_prediction = object()
 
 @dc.dataclass
 class DST_PerDomainEvaluation(ez.Config):
-    pipe: dp.DataProcessingPipeline = None
+    pipe: dp.DST_PerDomainEvaluationDataPipeline = None
     ignore_bot_turns: bool = True
     num_kept_examples: int = 0
     pred_save_path: str|None = None
@@ -29,6 +29,7 @@ class DST_PerDomainEvaluation(ez.Config):
     mean_slot_recall: float = None
     mean_slot_f1: float = None
     perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
+    use_for_training_validation: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -51,7 +52,8 @@ class DST_PerDomainEvaluation(ez.Config):
         if self.num_kept_examples > 0:
             self.examples = dict.fromkeys(self.rng.sample(
                 [turn_id for turn_id, turn in self.pipe.data.turns.items()
-                    if not self.ignore_bot_turns or turn.speaker != 'bot'],
+                    if (not self.ignore_bot_turns or turn.speaker != 'bot')
+                    and turn.slot_values],
                 min(len(self.pipe.data.turns), self.num_kept_examples)))
         subevaluations = []
         domains = {}
@@ -102,6 +104,7 @@ class DST_Evaluation(ez.Config):
     slot_recall: float = None
     slot_f1: float = None
     perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
+    use_for_training_validation: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -119,7 +122,6 @@ class DST_Evaluation(ez.Config):
 
     def _eval(self, approach, golds: ds.DSTData = None):
         self.pipe.process(data=golds)
-        self.pipe.data = dp.FillNegatives().process(self.pipe.data)
         preds = cp.deepcopy(self.pipe.data)
         preds = dp.RemoveLabels().process(preds)
         if self.num_kept_examples > 0 and not self.examples:

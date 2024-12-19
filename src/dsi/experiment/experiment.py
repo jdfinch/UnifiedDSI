@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import json
 import random as rng
 import sys
 import pathlib as pl
@@ -9,56 +10,62 @@ import ezpyzy as ez
 import copy as cp
 import os
 import contextlib as cl
+import datetime as dt
+import setproctitle
 
 import dsi.data.structure as ds
-import dsi.data.processing as dp
+import dsi.data.pipelines as dp
 import dsi.eval.dst_eval as dst_eval
 import dsi.eval.dsi_eval as dsi_eval
 import dsi.approach as app
 import dsi.utils.hardware_metrics as hw
+from dsi.utils.git_current_commit import git_current_commit
+import dsi.data.sgd.resplit as sgd_resplit
+import dsi.experiment.stages as ex_stage
 
 import language_model.generate as gen
 import language_model.llama3 as llama
 import language_model.tokens as tok
 import language_model as lm
 
-import setproctitle
+import typing as T
 
 
 @dc.dataclass
 class ExperimentConfig(ez.Config):
     name: str = lambda: ez.denominate()
     path: str = None
-    description: str = ''
+    description: str = 'no description'
     rng_seed: int = None
-    train_data_pipe: dp.DataProcessingPipeline | None = dp.DataProcessingPipeline(
-        processors=ez.MultiConfig[dp.DataProcessor](
-            downsample=dp.DownsampleDialogues(n=2),
-            enable_multi_domain=dp.EnableAllDomainsWithinEachDialogue(),
-            fill_negatives=dp.FillNegatives(),
-        )
-    )
+    train_sgd_resplit: ex_stage.TrainSGD_Resplit|None = None
+    train_d0t: ex_stage.TrainD0T|None = None
     training_perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
-    validations: ez.MultiConfig[
-        dst_eval.DST_Evaluation|dst_eval.DST_PerDomainEvaluation|dsi_eval.DSI_Evaluation
-    ]|None = ez.MultiConfig()
-    evaluations: ez.MultiConfig[
-        dst_eval.DST_Evaluation|dst_eval.DST_PerDomainEvaluation|dsi_eval.DSI_Evaluation
-    ]|None = ez.MultiConfig()
-    """Data processing that gets applied only to evaluation data when evaluating during training."""
+    training_preprocessing_perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
+    valid_dst_sgd_train_resplit: ex_stage.ValidDST_SGD_TrainResplit|None = None
+    valid_dst_sgd_resplit: ex_stage.ValidDST_SGD_Resplit|None = None
+    valid_dst_mwoz: ex_stage.ValidDST_MWOZ|None = None
+    valid_dsi_mwoz: ex_stage.ValidDSI_MWOZ|None = None
+    eval_dst_sgd_resplit: ex_stage.EvalDST_SGD_Resplit|None = None
+    eval_dst_mwoz: ex_stage.EvalDST_MWOZ|None = None
+    eval_dsi_mwoz: ex_stage.EvalDSI_MWOZ|None = None
     approach: app.LinearDSIConfig = app.LinearDSIConfig()
-    eval_every_n_steps: int|None|list[tuple[int,int]] = None
-    eval_every_epoch: bool = True
+    validate_every_n_steps: int | list[int] | None = None
+    validate_every_epoch: bool = False
     criterion_for_best_model: tuple[str, str]|None = None
     """Which evaluation (attr name) and metric (attr name) to use to determine which model is best."""
     best_score: float = None
     best_model_epoch_step: tuple[int, int]|None = None
+    timestamp: T.Any = None
+    git_commit: str|None = None
     previous_experiment: dict|None|'ExperimentConfig' = None
     follow_up_experiments: ez.MultiConfig['ExperimentConfig'] = ez.MultiConfig()
 
-
     def __post_init__(self):
         super().__post_init__()
+        if not isinstance(self.git_commit, str):
+            self.git_commit = git_current_commit()
+        if not isinstance(self.timestamp, str) or self.timestamp.isalpha():
+            self.timestamp = dt.datetime.now().isoformat()
         if self.path is None: self.path = f'ex/{self.name}'
         if self.rng_seed is None:
             self.rng_seed = rng.randint(1, sys.maxsize)
@@ -66,14 +73,43 @@ class ExperimentConfig(ez.Config):
         for _, eval in [*self.validations, *self.evaluations]:
             if not eval.pipe.configured.has.rng_seed:
                 eval.pipe.rng_seed = self.rng_seed
-        if not self.train_data_pipe.configured.has.rng_seed:
-            self.train_data_pipe.rng_seed = self.rng_seed
+        for _, pipe in self.train_datas:
+            if not pipe.configured.has.rng_seed:
+                pipe.rng_seed = self.rng_seed
         if not self.approach.configured.has.rng_seed:
             self.approach.rng_seed = self.rng_seed
 
+    @property
+    def train_datas(self):
+        return [(name, pipe) for name, pipe in self
+            if isinstance(pipe, dp.DataProcessingPipeline)]
+
+    @property
+    def evaluations(self):
+        return [(name, eval) for name, eval in self
+            if getattr(eval, 'use_for_training_validation', None) is False]
+
+    @property
+    def validations(self):
+        return [(name, eval) for name, eval in self
+            if getattr(eval, 'use_for_training_validation', None) is True]
+
+    @property
+    def current_step(self):
+        if self.approach and self.approach.model and self.approach.model.training:
+            return self.approach.model.training.current_step or 0
+        else:
+            return 0
+
+    @property
+    def current_epoch(self):
+        if self.approach and self.approach.model and self.approach.model.training:
+            return self.approach.model.training.current_epoch or 0
+        else:
+            return 0
+
 @dc.dataclass
 class Experiment(ez.ImplementsConfig, ExperimentConfig):
-
     approach: app.LinearDSIConfig = app.LinearDSIConfig()
     send_emails: bool = False
 
@@ -82,10 +118,9 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
         setproctitle.setproctitle(self.name) # noqa
         self.training_examples = ''
         self.evaluation_examples = []
-        if self.train_data_pipe is not None:
+        if self.train_datas:
             self.train()
-        else:
-            self.evaluate()
+        self.evaluate()
 
     def save(self):
         save_path = pl.Path(self.path)
@@ -98,8 +133,16 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
         self.configured.save(save_path/f"experiment.json")
 
     def train(self):
-        self.train_data_pipe.process()
-        for epoch, steps in enumerate(self.approach.train(self.train_data_pipe.data), start=1):
+        train_datas = self.train_datas
+        with self.training_preprocessing_perf_metrics.track():
+            for _, train_data in train_datas:
+                train_data.process()
+            if len(train_datas) > 1:
+                train_data = dp.Concatenate().process([pipe.data for _, pipe in train_datas])
+            else:
+                train_data = train_datas[0][1].data
+        total_steps = 0
+        for epoch, steps in enumerate(self.approach.train(train_data), start=1):
             training_performance_tracker = cl.nullcontext()
             if epoch == 1:
                 training_examples = [''.join(str(s) for s in e) for e in self.approach.model.training.examples]
@@ -109,11 +152,12 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
                 training_performance_tracker = self.training_perf_metrics.track()
             with training_performance_tracker:
                 for step, ppl in enumerate(steps, start=1):
-                    if (isinstance(self.eval_every_n_steps, int) and step % self.eval_every_n_steps == 0
-                        or isinstance (self.eval_every_n_steps, list) and (epoch, step) in self.eval_every_n_steps
+                    total_steps += 1
+                    if (isinstance(self.validate_every_n_steps, int) and step % self.validate_every_n_steps == 0
+                        or isinstance (self.validate_every_n_steps, list) and total_steps in self.validate_every_n_steps
                     ):
                         self.validate()
-            if self.eval_every_epoch:
+            if self.validate_every_epoch:
                 self.validate()
         if self.best_model_epoch_step:
             epoch, step = self.best_model_epoch_step
@@ -121,8 +165,7 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
             if self.evaluations:
                 epoch, step = self.best_model_epoch_step
                 self.approach.model = type(self.approach.model)(str(pl.Path(self.path)/f"{epoch}-{step}")) # noqa
-                self.evaluate()
-        elif not self.eval_every_epoch and not self.eval_every_n_steps:
+        elif not self.validate_every_epoch and not self.validate_every_n_steps:
             self.validate()
 
     def current_path(self):
@@ -139,10 +182,11 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
             evaluation.eval(self.approach)
             self.evaluation_examples.append(f"\n{'='*100}\n{evaluation}\n{'='*100}\n" +
                 f"\n{'.'*100}\n".join(example for example in evaluation.examples.values()))
-            print(self.evaluation_examples[-1])
+            if self.evaluation_examples:
+                print(self.evaluation_examples[-1])
         if self.criterion_for_best_model:
             name, metric = self.criterion_for_best_model
-            if (score:=getattr(getattr(self.validations, name, None), metric, None)) is not None:
+            if (score:=getattr(getattr(self, name, None), metric, None)) is not None:
                 if self.best_score is None or score >= self.best_score:
                     self.best_model_epoch_step = (
                         self.approach.model.training.current_epoch, self.approach.model.training.current_step)
@@ -151,23 +195,21 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
     def evaluate(self):
         if self.evaluations:
             self._eval(self.evaluations)
-        validations = self.validations
-        self.validations = None
-        self.evaluations.configured.save(pl.Path(self.path)/'evaluation.json')
-        self.validations = validations
+            evaluation_file = pl.Path(self.path)/'evaluation.json'
+            evaluations = {name: eval.configured.json() for name, eval in self.evaluations}
+            evaluation_file.write_text(json.dumps(evaluations))
 
     def validate(self):
         if self.validations:
             self._eval(self.validations)
         if self.send_emails:
             ez.email("jamesfinch293@gmail.com",
-                f"{self.name} {self.approach.model.training.current_epoch}-{self.approach.model.training.current_step}",
-                "\n\n".join([
+                subject=f"{self.name} {self.approach.model.training.current_epoch}-{self.approach.model.training.current_step}",
+                message="\n\n".join([
                     self.training_examples,
                     *self.evaluation_examples,
                     self.configured.json()
-                ])
-            )
+                ]))
         self.save()
 
 
@@ -182,114 +224,50 @@ if __name__ == '__main__':
             Experiment(base=pl.Path('ex')/experiment_name/'launch.json', send_emails=True)
         except Exception as e:
             ez.email("jamesfinch293@gmail.com", f"{experiment_name} Error",
-                tb.format_exc()
-            )
+                tb.format_exc())
             raise e
         quit()
 
 
     ####### FOR DEBUG  :D ######################################################################
 
-    sgd_training_domains = [
-        "Banks_1", "Buses_1", "Buses_2", "Calendar_1", "Events_1", "Events_2", "Events_3",
-        "Flights_1", "Flights_2", "Flights_3", "Flights_4", "Homes_1",
-        "Media_1", "Media_2", "Media_3", "Movies_1", "Music_1", "Music_2", "Music_3"
-        "RentalCars_1", "RentalCars_2", "RentalCars_3"
-        "Services_1", "Services_2", "Services_3", "Services_4", "Weather_1",
-        "Alarm_1", "Messaging_1", "Payment_1"
-    ]
 
-    sgd_testing_domains = [
-        "Hotels_1", "Hotels_2", "Hotels_3", "Hotels_4",
-        "Restaurants_1", "Restaurants_2",
-        "RideSharing_1", "RideSharing_2",
-        "Travel_1", # attractions
-        "Trains_1"
-    ]
 
-    ex = Experiment(
+    ex = ExperimentConfig(
         rng_seed=42,
-        criterion_for_best_model=('dst_valid', 'mean_joint_goal_accuracy'),
-        eval_every_n_steps=100,
-        train_data_pipe=dp.DataProcessingPipeline(
+        criterion_for_best_model=('valid_dst_sgd_resplit', 'mean_joint_goal_accuracy'),
+        validate_every_n_steps=[20, 30, 40, 50],
+        train_sgd_resplit=ex_stage.TrainSGD_Resplit(
             load_path='data/sgd/valid',
-            processors=ez.MultiConfig(
-                domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-                downsample=dp.DownsampleDialogues(n=50),
-                multi_domain=dp.EnableAllDomainsWithinEachDialogue(),
-                standardize_slots=dp.StandardizeSlotNames(),
-            )
-        ),
-        validations=ez.MultiConfig(
-            dst_train=dst_eval.DST_Evaluation(
-                pipe=dp.DataProcessingPipeline(
-                    load_path='data/sgd/valid',
-                    processors=ez.MultiConfig(
-                        domains=dp.SelectDomains(domains=sgd_training_domains, filter_dialogues=True),
-                        downsample=dp.DownsampleDialogues(n=5),
-                        standardize_slots=dp.StandardizeSlotNames(),
-                    )
-                ),
-                num_kept_examples=5,
-            ),
-            dst_valid=dst_eval.DST_PerDomainEvaluation(
-                pipe=dp.DataProcessingPipeline(
-                    load_path='data/sgd/valid',
-                    processors=ez.MultiConfig(
-                        domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                        downsample=dp.DownsampleDialogues(n=5),
-                        standardize_slots=dp.StandardizeSlotNames(),
-                    )
-                ),
-                num_kept_examples=5,
-                pred_save_path='auto'
-            ),
-            discover=dsi_eval.DSI_Evaluation(
-                pipe=dp.DataProcessingPipeline(
-                    load_path='data/sgd/valid',
-                    processors=ez.MultiConfig(
-                        domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                        downsample=dp.DownsampleDialogues(n=5),
-                        standardize_slots=dp.StandardizeSlotNames(),
-                    )
-                ),
-                num_kept_examples=3,
-                pred_save_path='auto',
-            ),
-        ),
-        evaluations=ez.MultiConfig(
-            discover=dsi_eval.DSI_Evaluation(
-                pipe=dp.DataProcessingPipeline(
-                    load_path='data/sgd/valid',
-                    processors=ez.MultiConfig(
-                        domains=dp.SelectDomains(domains=sgd_testing_domains, filter_dialogues=True),
-                        downsample=dp.DownsampleDialogues(n=10),
-                        standardize_slots=dp.StandardizeSlotNames(),
-                    )
-                ),
-                num_kept_examples=3,
-                pred_save_path='auto',
-            ),
-        ),
+            downsample=dp.DownsampleDialogues(n=10)),
+        valid_dst_sgd_resplit=ex_stage.ValidDST_SGD_Resplit(
+            pipe=dp.DST_PerDomainEvaluationDataPipeline(downsample=dp.DownsampleDialogues(n=1))),
+        eval_dst_mwoz=ex_stage.EvalDST_MWOZ(
+            pipe=dp.DST_PerDomainEvaluationDataPipeline(downsample=dp.DownsampleDialogues(n=2))),
+        eval_dsi_mwoz=ex_stage.EvalDSI_MWOZ(
+            pipe=dp.DSI_EvaluationDataPipeline(downsample=dp.DownsampleDialogues(n=3))),
         approach=app.LinearDSIConfig(
             model=llama.Llama3Config(
                 model_base="meta-llama/Llama-3.2-1B-Instruct",
-                adapters=ez.MultiConfig(adapter=lm.LoRA(rank=1)),
+                adapter=lm.LoRA(rank=1),
                 template_tokenizer=llama.Llama3TemplateTokenizerConfig(
-                    max_length=1024
-                ),
-                generation=gen.Greedy(batch_size=1, num_kept_examples=3),
+                    max_length=1024),
+                generation=gen.Greedy(batch_size=5, num_kept_examples=3),
                 training=lm.Training(
                     optimizer=lm.Adam(learning_rate=1e-3, weight_decay=0),
                     scheduler=lm.LinearWarmupSchedule(num_warmup_steps=10),
-                    batch_size=8,
-                    physical_batch_size=1,
+                    batch_size=4,
+                    physical_batch_size=2,
                     epochs=2,
                     num_kept_examples=4
                 )
             )
         )
     )
+
+    print(ex.configured.json())
+
+    ex = Experiment(ex)
 
     print(ex.configured.json())
 

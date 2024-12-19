@@ -16,17 +16,16 @@ class PerformanceMetrics(ez.Config):
 
     @cl.contextmanager
     def track(self):
-        with ez.Timer() as timer:
-            with measure_vram_usage_gb() as vram_gb:
-                try:
-                    yield
-                except Exception as e:
-                    self.error_type = str(type(e))
-                    raise
-                finally:
-                    self.run_time_h = timer.elapsed.hours
-                    self.ram_used_gb = measure_ram_usage_gb()
-                    self.vram_used_gb, = vram_gb
+        try:
+            with ez.Timer() as timer, measure_vram_usage_gb() as vram_gb:
+                yield
+        except Exception as e:
+            self.error_type = str(type(e))
+            raise
+        finally:
+            self.run_time_h = timer.elapsed.hours
+            self.ram_used_gb = measure_ram_usage_gb()
+            self.vram_used_gb, = vram_gb
 
     def max_update(self, submeasurements: list['PerformanceMetrics']):
         for submeasurement in submeasurements:

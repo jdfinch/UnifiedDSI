@@ -7,7 +7,7 @@ import copy as cp
 import itertools as it
 import pathlib as pl
 
-import dsi.data.processing as dp
+import dsi.data.pipelines as dp
 import dsi.utils.hardware_metrics as hw
 
 import random as rng
@@ -18,7 +18,7 @@ no_prediction = object()
 @dc.dataclass
 class DSI_Evaluation(ez.Config):
     pipe: dp.DataProcessingPipeline = None
-    schema_discovery_percent_value_recall_match_threshold: float = 0.5
+    schema_discovery_percent_value_precision_match_threshold: float = 0.5
     ignore_bot_turns: bool = True
     num_kept_examples: int = 0
     pred_save_path: str|None = None
@@ -31,6 +31,7 @@ class DSI_Evaluation(ez.Config):
     discovered_value_f1: float = None
     discovered_joint_goal_accuracy: float = None
     perf_metrics: hw.PerformanceMetrics = hw.PerformanceMetrics()
+    use_for_training_validation: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -68,13 +69,14 @@ class DSI_Evaluation(ez.Config):
     def match_discovered_schema(self, golds: ds.DSTData, preds: ds.DSTData):
         assert len(golds.dialogues) == len(preds.dialogues)
         assert len(golds.turns) == len(preds.turns)
-        match_threshold = self.schema_discovery_percent_value_recall_match_threshold
+        match_threshold = self.schema_discovery_percent_value_precision_match_threshold
         gold_pred_matches = col.defaultdict(int) # (gold (domain, name), pred (domain, name)) -> num_value_matches: int
         gold_schema = golds.schema()
         gold_schema_slot_set = {(slot.domain, slot.name) for slot in gold_schema}
         pred_schema = preds.schema()
         pred_schema_slot_set = {(slot.domain, slot.name) for slot in pred_schema}
         total_values_per_slot = col.defaultdict(int)
+        total_preds_per_slot = col.defaultdict(int)
         for gold_dialogue, predicted_dialogue in zip(golds, preds):
             for gold_turn, predicted_turn in zip(gold_dialogue, predicted_dialogue):
                 if self.ignore_bot_turns and gold_turn.speaker == 'bot': continue
@@ -90,6 +92,8 @@ class DSI_Evaluation(ez.Config):
                     example_pred = '\n'.join(f"{' '.join(s)}: {v}" for s, v in pred_state.items())
                     example = f"Discovered:\n{example_pred}\n\nGold:\n{example_gold}"
                     self.examples[example_key] = f"{example}\n\n{self.examples[example_key]}"
+                for pred_slot, pred_value in pred_state.items():
+                    total_preds_per_slot[pred_slot] += 1
                 for gold_slot, gold_value in gold_state.items():
                     total_values_per_slot[gold_slot] += 1
                     for pred_slot, pred_value in pred_state.items():
@@ -101,7 +105,7 @@ class DSI_Evaluation(ez.Config):
         for (gold_slot, pred_slot), num_matches in gold_pred_matches:
             if gold_slot in matches:
                 continue
-            elif num_matches / total_values_per_slot[gold_slot] >= match_threshold:
+            elif num_matches / total_preds_per_slot[pred_slot] >= match_threshold:
                 matches[gold_slot] = pred_slot
         self.schema_matching = list(matches.items())
         return matches

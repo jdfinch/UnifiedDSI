@@ -1,7 +1,10 @@
 
 import dataclasses as dc
+import pickle
+
 import ezpyzy as ez
 import pathlib as pl
+import pickle as pkl
 
 import typing as T
 
@@ -154,6 +157,9 @@ class DSTData:
 
     def schema(self):
         return list(self.slots.values())
+
+    def __deepcopy__(self, memodict={}):
+        return pkl.loads(pickle.dumps(self))
 
     def __iter__(self):
         return iter(self.dialogues.values())
