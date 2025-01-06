@@ -18,26 +18,14 @@ unzip $output_file -d "data"
 # Remove the zip file to save space
 rm $output_file
 
-# Navigate into the unzipped directory
-cd data/sgd-schema-guided-dialogue-master
-
-# If there's a preprocessing script, you can run it here
-# For example:
-# python preprocess_data.py
-
-# Navigate back to the root directory
-cd ../..
-
 # Create a new directory to organize the dataset
 mkdir -p data/sgd/original
 mkdir -p data/sgd/SGD
 
 # Move the dataset to the new directory
-mv data/sgd-schema-guided-dialogue-master/dev data/sgd/original
-mv data/sgd-schema-guided-dialogue-master/test data/sgd/original
-mv data/sgd-schema-guided-dialogue-master/train data/sgd/original
+mv data/dstc8-schema-guided-dialogue-master/dev data/sgd/original/dev
+mv data/dstc8-schema-guided-dialogue-master/test data/sgd/original/test
+mv data/dstc8-schema-guided-dialogue-master/train data/sgd/original/train
 
 # Optionally, move the entire unzipped directory for reference
-mv data/sgd-schema-guided-dialogue-master data/sgd/SGD
-
-mv data/sgd data/sgd
+mv data/dstc8-schema-guided-dialogue-master data/sgd/SGD
