@@ -20,7 +20,6 @@ rm $output_file
 
 # Create a new directory to organize the dataset
 mkdir -p data/sgd/original
-mkdir -p data/sgd/SGD
 
 # Move the dataset to the new directory
 mv data/dstc8-schema-guided-dialogue-master/dev data/sgd/original/dev
@@ -28,4 +27,4 @@ mv data/dstc8-schema-guided-dialogue-master/test data/sgd/original/test
 mv data/dstc8-schema-guided-dialogue-master/train data/sgd/original/train
 
 # Optionally, move the entire unzipped directory for reference
-mv data/dstc8-schema-guided-dialogue-master data/sgd/SGD
+mv data/dstc8-schema-guided-dialogue-master data/sgd/meta

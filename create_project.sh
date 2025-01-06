@@ -14,6 +14,8 @@ ln -s ../subgit/langauge_model/language_model $(realpath src/language_model)
 # conda activate UnifiedDSI
 # pip install -r requirements.txt
 
+cd ..
+
 mkdir data
 mkdir ex
 mkdir results
