@@ -148,8 +148,8 @@ class DsiExperiment:
 
     def tokenize_collated_data(self,
          examples: list[DsiTrainingExample]
-    ) -> list[dict[str, list[int]]]:
-        tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id, local_files_only=True)
+    ) -> list[str, int, int]:
+        tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
         sequences = []
         for example in examples:
             schema = []
@@ -181,15 +181,27 @@ class DsiExperiment:
                 examples = examples.split(', ')
                 discovered_slot_values.append(DiscoveredSlotValue(slot, description, value))
             sequences.append(create_dsi_sequence(schema, dialogue, slot_values, discovered_slot_values))
-        tokenized_sequences = []
         sequence_texts = [seq.text for seq in sequences]
         sequence_tokens = tokenizer.batch_encode_plus(
             sequence_texts, return_offsets_mapping=True, add_special_tokens=False)
+        tokens_ids_labels_list = []
         for sequence, tokens, offsets in zip(sequences, sequence_tokens['input_ids'], sequence_tokens['offset_mapping']):
-            ...
-
-
-        return tokenized_sequences
+            tokens_ids_labels = []
+            str_indices_of_labels = set()
+            for span_type in [
+                ('SlotValues', 'slot_values'),
+                ('SlotValues', 'eos'),
+                ('DiscoveredSlotValues', 'discovered_slot_values'),
+                ('DiscoveredSlotValues', 'eos'),
+            ]:
+                for i, j in sequence.slots.get(span_type, ()):
+                    str_indices_of_labels.update(range(i, j))
+            for token_id, (i, j) in zip(tokens, offsets):
+                token_id_labels = (sequence.text[i:j], token_id, 
+                    token_id if i in str_indices_of_labels or j in str_indices_of_labels else -100)
+                tokens_ids_labels.append(token_id_labels)
+            tokens_ids_labels_list.append(tokens_ids_labels)
+        return tokens_ids_labels_list
                 
 
     def dsi_training(self, examples: list[DsiTrainingExample]):
@@ -247,14 +259,19 @@ class User(Sequence):
     text: ...
 
 @dc.dataclass
-class Assistant(Sequence):
+class AssistantContext(Sequence):
     format = "<|start_header_id|>assistant<|end_header_id|>\n\n{text}<|eot_id|>"
+    text: ...
+
+@dc.dataclass
+class AssistantResponse(Sequence):
+    format = "<|start_header_id|>assistant<|end_header_id|>\n\n{text}"
     text: ...
 
 @dc.dataclass
 class Llama3Sequence(Sequence):
     format = "<|begin_of_text|>{text}"
-    text: list[System|User|Assistant]
+    text: list[System|User|AssistantContext|AssistantResponse]
 
 @dc.dataclass
 class SchemaSlot(Sequence):
@@ -290,8 +307,9 @@ class SlotValue(Sequence):
 
 @dc.dataclass
 class SlotValues(Sequence):
-    format = "# Information Values\n* {slot_values}"
+    format = "# Information Values\n* {slot_values}{eos}"
     slot_values: list[SlotValue] = dc.field(default_factory=list)
+    eos: str = '<|eot_id|>'
 
 @dc.dataclass
 class DiscoveredSlotValue(Sequence):
@@ -302,8 +320,9 @@ class DiscoveredSlotValue(Sequence):
 
 @dc.dataclass
 class DiscoveredSlotValues(Sequence):
-    format = "# Additional Information Types\n* {discovered_slot_values}"
+    format = "# Additional Information Types\n* {discovered_slot_values}{eos}"
     discovered_slot_values: list[DiscoveredSlotValue] = dc.field(default_factory=list)
+    eos: str = '<|eot_id|>'
 
 @dc.dataclass
 class DstPrompt(Sequence):
@@ -322,9 +341,9 @@ def create_dsi_sequence(
         System(instruction="Identify key information in the dialogue."),
         User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
             instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
-        Assistant(SlotValues(slot_values=slot_values)),
+        AssistantResponse(SlotValues(slot_values=slot_values)),
         User("Identify any Additional Information Types not covered by the above Information Types."),
-        Assistant(DiscoveredSlotValues(discovered_slot_values=discovered_slot_values))
+        AssistantResponse(DiscoveredSlotValues(discovered_slot_values=discovered_slot_values))
     ])
 
 
@@ -333,7 +352,16 @@ if __name__ == '__main__':
     experiment = DsiExperiment(sgd_train_downsample_dialogues=10)
     sgd_train_data = experiment.collate_sgd_for_dsi_training()
     pl.Path('ex/sgd_train_collated.json').write_text(json.dumps([vars(x) for x in sgd_train_data], indent=2))
-    experiment.tokenize_collated_data(sgd_train_data)
+    tokens = experiment.tokenize_collated_data(sgd_train_data)
+    nl = '\n'
+    pl.Path('ex/sgd_train_tokens.json').write_text(''.join([
+        '[\n  ',
+        ',\n  '.join([
+            '[' + ',\n    '.join(json.dumps(x) for x in seq) + ']'
+            for seq in tokens
+        ]),
+        '\n]'
+    ]))
 
 
 
