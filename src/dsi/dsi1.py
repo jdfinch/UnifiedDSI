@@ -2,15 +2,20 @@
 import transformers as hf
 import dataclasses as dc
 import pathlib as pl
+import functools as ft
 import json
 import random as rng
 import ezpyzy as ez
 import re
 import textwrap as tw
 import os
-
-os.environ['HF_HOME'] = str(pl.Path('/local/scratch/jdfinch')/'.cache')
-
+import torch as pt
+import bitsandbytes as bnb
+import setproctitle as spt
+from tqdm import tqdm
+import dsi.mwoz24
+import utils
+import typing as T
 
 
 @dc.dataclass
@@ -27,18 +32,42 @@ class DsiTrainingExample:
 class DsiExperiment:
     sgd_train_data_path: str = 'data/sgd/train_wo_mwoz_doms'
     sgd_train_downsample_dialogues: int|None = None
-    proportion_training_with_predefined_schema = 0.5
-    proportion_training_without_predefined_schema = 0.25
+    proportion_training_with_predefined_schema = 0.33
+    proportion_training_without_predefined_schema = 0.33
+    speaker_map: dict[str, str] = dc.field(default_factory=lambda: {
+        'user': 'User', 'system': 'Agent', 'bot': 'Agent'})
+    model_to_load: str = 'meta-llama/Llama-3.2-1B-Instruct'
+    batch_size: int = 16
+    physical_batch_size: int = 16
+    learning_rate: float = 1e-4
+    weight_decay: float = 0.0
+    optimizer_quantization: str|None = '8bit'
+    warmup: int = 10
+    decoding_beams: int = 1
+    decoding_repetition_penalty: float = 1.2
+    decoding_length_penalty: float = 0.0
     base_model_repo_id: str = 'meta-llama/Llama-3.2-1B-Instruct'
-    root_path = '/local/scratch/jdfinch'
-    rng_seed = 42
+    root_path: str = '/local/scratch/jdfinch'
+    project_path: str = '/local/scratch/jdfinch/2025/UnifiedDSI'
+    device: str|int = 'cuda'
+    rng_seed: int = 42
 
     def __post_init__(self):
         self.rng = rng.Random(self.rng_seed)
-        
+        os.environ['HF_HOME'] = str(pl.Path(self.root_path)/'.cache')
+        self.tokenizer: hf.LlamaTokenizer = None
+
+    def load_model(self):
+        self.model: hf.LlamaForCausalLM = hf.AutoModelForCausalLM(
+            self.model_to_load, 
+            attn_implementation='flash_attention_2',
+            torch_dtype=pt.bfloat16,
+            device_map='auto' if self.device == 'auto' else {'': self.device})
+        if self.tokenizer is None:
+            self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
     
     def collate_sgd_for_dsi_training(self) -> list[DsiTrainingExample]:
-        training_examples = []
+        training_examples: list[DsiTrainingExample] = []
         sgd_data_path = pl.Path(self.sgd_train_data_path)
         sgd_schema_path = sgd_data_path/'schema.json'
         schema_json = json.loads(sgd_schema_path.read_text())
@@ -60,13 +89,14 @@ class DsiExperiment:
                 else:
                     description = f"{domain} {slot_name}: {slot_description}"
                 schema.setdefault(domain, {})[slot_name] = description
-        dialogues_by_domain = {}
-        for file in sorted(sgd_data_path.glob('dialogue*.json')):
-            file_dialogues_json = json.loads(file.read_text())
-            for dialogue_json in file_dialogues_json:
-                dialogue_domains = dialogue_json['services']
-                for domain in dialogue_domains:
-                    dialogues_by_domain.setdefault(domain, []).append(dialogue_json)
+        with ez.Timer('read SGD json'):
+            dialogues_by_domain = {}
+            for file in sorted(sgd_data_path.glob('dialogue*.json')):
+                file_dialogues_json = json.loads(file.read_text())
+                for dialogue_json in file_dialogues_json:
+                    dialogue_domains = dialogue_json['services']
+                    for domain in dialogue_domains:
+                        dialogues_by_domain.setdefault(domain, []).append(dialogue_json)
         if self.sgd_train_downsample_dialogues:
             domain_counts = {domain: 0 for domain in dialogues_by_domain}
             for dialogues_sublist in dialogues_by_domain.values():
@@ -144,12 +174,39 @@ class DsiExperiment:
                 self.rng.shuffle(discovery_list)
                 training_example.discoveries = dict(discovery_list)
                 training_examples.append(training_example)
+        turn_map = {}
+        slot_description_map = {}
+        for training_example in training_examples:
+            for slot in training_example.schema + list(training_example.discoveries):
+                domain_slot_name, description = slot.split(': ', 1)
+                domain_name, slot_name = domain_slot_name.split(' ', 1)
+                domain_name = utils.textify(domain_name, plural_to_singular=True)
+                slot_name = utils.textify(slot_name)
+                slot_description_map[slot] = f"{domain_name} {slot_name}: {description}"
+            schema = []
+            for slot in training_example.schema:
+                schema.append(slot_description_map[slot])
+            context = []
+            for turn in training_example.context:
+                if turn not in turn_map:
+                    speaker, turn_text = turn.split(': ', 1)
+                    speaker = self.speaker_map.get(speaker.lower(), speaker)
+                    turn_text = utils.untokenize_text(turn_text)
+                    turn_map[turn] = f"{speaker}: {turn_text}"
+                context.append(turn_map[turn])
+            state_update = {slot_description_map[k]: v for k, v in training_example.state_update.items()}
+            discoveries = {slot_description_map[k]: v for k, v in training_example.discoveries.items()}
+            training_example.schema = schema
+            training_example.context = context
+            training_example.state_update = state_update
+            training_example.discoveries = discoveries
         return training_examples
 
     def tokenize_collated_data(self,
          examples: list[DsiTrainingExample]
-    ) -> list[str, int, int]:
-        tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
+    ) -> list[list[tuple[str, int, int]]]:
+        if self.tokenizer is None:
+            self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
         sequences = []
         for example in examples:
             schema = []
@@ -182,8 +239,9 @@ class DsiExperiment:
                 discovered_slot_values.append(DiscoveredSlotValue(slot, description, value))
             sequences.append(create_dsi_sequence(schema, dialogue, slot_values, discovered_slot_values))
         sequence_texts = [seq.text for seq in sequences]
-        sequence_tokens = tokenizer.batch_encode_plus(
-            sequence_texts, return_offsets_mapping=True, add_special_tokens=False)
+        with ez.Timer('huggingface tokenization'):
+            sequence_tokens = self.tokenizer.batch_encode_plus(
+                sequence_texts, return_offsets_mapping=True, add_special_tokens=False)
         tokens_ids_labels_list = []
         for sequence, tokens, offsets in zip(sequences, sequence_tokens['input_ids'], sequence_tokens['offset_mapping']):
             tokens_ids_labels = []
@@ -204,9 +262,97 @@ class DsiExperiment:
         return tokens_ids_labels_list
                 
 
-    def dsi_training(self, examples: list[DsiTrainingExample]):
-        tokens = self.tokenize_collated_data(examples=examples)
+    def dsi_training(self, examples: list[DsiTrainingExample] = None, tokens: list[list[tuple[str, int, int]]] = None):
+        self.model.train()
+        if tokens is None:
+            tokens = self.tokenize_collated_data(examples=examples)
+        tokens_within_maxlen = [x for x in tokens if len(x) < self.max_seq_len]
+        if len(tokens_within_maxlen) < len(tokens):
+            print(f"Filtered out {len(tokens) - len(tokens_within_maxlen)}/{len(tokens)} sequences over max_seq_len {self.max_seq_len}")
+        if self.optimizer_quantization == '8bit':
+            optimizer = bnb.optim.AdamW8bit(
+                self.model.parameters(),
+                lr=self.learning_rate, weight_decay=self.weight_decay)
+        elif self.optimizer_quantization is None:
+            optimizer = hf.AdamW(
+                self.model.parameters(),
+                learning_rate=self.learning_rate, weight_decay=self.weight_decay)
+        else:
+            raise ValueError(f"Invalid optimizer quantization: {self.optimizer_quantization}")
+        scheduler = pt.optim.lr_scheduler.LinearLR(
+            optimizer=optimizer,
+            start_factor=0.01, end_factor=1.0, total_iters=self.warmup)
+        def train_one_epoch(epoch):
+            gradient_accumulation_steps = self.batch_size // self.physical_batch_size
+            self.rng.shuffle(tokens_within_maxlen)
+            steps = []
+            for j in range(self.physical_batch_size, len(tokens_within_maxlen)+1, self.physical_batch_size):
+                i = j - self.physical_batch_size
+                steps.append((i, j))
+            gradient_accumulation_step = 0
+            for i, j in tqdm(steps, f"Training (Epoch {epoch})"):
+                seqs = tokens_within_maxlen[i:j]
+                max_len_seq = max(len(x) for x in seqs)
+                max_len_seq += max_len_seq % 8  # pad to multiple of 8 for better alignment on gpu
+                seqs = [
+                    [(0, 0, -100)]*(max_len_seq-len(seq)) + [(token, 1, label) for _, token, label in seq]
+                    for seq in seqs]
+                device = 'cuda' if self.device == 'auto' else self.device
+                rotated = [pt.tensor(tensor, dtype=pt.long).to(device) for tensor in zip(*seqs)]
+                inputs = dict(zip(('input_ids', 'attention_mask', 'labels'), rotated))
+                loss = self.model(**inputs) / gradient_accumulation_steps
+                loss.backward()
+                if gradient_accumulation_step == gradient_accumulation_steps:
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    gradient_accumulation_step = 0
+                    yield loss.item()
+                else:
+                    gradient_accumulation_step += 1
+        for i in range(self.epochs):
+            yield train_one_epoch(i)
+        self.model.eval()
 
+    def dsi_predict(self, contexts: list[list[str]], schema: list[str] = None):
+        if schema is None:
+            schema = []
+        generation_config = hf.GenerationConfig(
+            num_beams=self.decoding_beams,
+            do_sample=False,
+            repetition_penalty=self.decoding_repetition_penalty,
+            length_penalty=self.decoding_length_penalty)
+        device = 'cuda' if self.device == 'auto' else self.device
+        predicted_state_updates = []
+        for context in contexts:
+            dialogue = []
+            for turn in context:
+                speaker, text = turn.split(': ', 1)
+                dialogue.append(DialogueTurn(speaker, text))
+            dst_prompt = create_dsi_sequence(
+                schema=schema, dialogue=dialogue, slot_values=None, discovered_slot_values=None)
+            dst_prompt_tokens = self.tokenizer.encode(dst_prompt.text, add_special_tokens=False)
+            dst_prompt_tokens = pt.tensor(dst_prompt_tokens, dtype=pt.long).to(device)
+            all_tokens = self.model.generate(inputs=dst_prompt_tokens, generation_config=generation_config)
+            generated_tokens = all_tokens[len(dst_prompt_tokens):]
+            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            slot_values = SlotValues.parse_from(generated_text)
+            dsi_prompt = create_dsi_sequence(
+                schema=schema, dialogue=dialogue, slot_values=slot_values.slot_values, discovered_slot_values=None)
+            dsi_prompt_tokens = self.tokenizer.encode(dsi_prompt.text, add_special_tokens=False)
+            dsi_prompt_tokens = pt.tensor(dsi_prompt_tokens, dtype=pt.long).to(device)
+            all_tokens = self.model.generate(inputs=dsi_prompt_tokens, generation_config=generation_config)
+            generated_tokens = all_tokens[len(dsi_prompt_tokens):]
+            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            discovered_slot_values = DiscoveredSlotValues.parse_from(generated_text)
+            state_update = {}
+            for slot_value in slot_values.slot_values:
+                state_update[slot_value.slot] = slot_value.value
+            for discovery in discovered_slot_values.discovered_slot_values:
+                state_update[discovery.slot] = discovery.value
+                schema.append(SchemaSlot(name=discovery.slot, description=discovery.description))
+            predicted_state_updates.append(state_update)
+        return predicted_state_updates
 
 
 @dc.dataclass
@@ -247,6 +393,15 @@ class Sequence:
         self.slots.setdefault(seq_type_name, []).append((0, prefix_len))
         self.text: str = ''.join(sequence)
 
+
+F = T.TypeVar('F')
+def except_return_none(f: F) -> F:
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception:
+            return None
+    return wrapper
         
 @dc.dataclass
 class System(Sequence):
@@ -305,11 +460,22 @@ class SlotValue(Sequence):
     slot: str
     value: str
 
+    @except_return_none
+    @classmethod
+    def parse_from(cls, seq):
+        slot, value = seq.split(': ', 1)
+        return SlotValue(slot.strip(), value.strip())
+
 @dc.dataclass
 class SlotValues(Sequence):
     format = "# Information Values\n* {slot_values}{eos}"
     slot_values: list[SlotValue] = dc.field(default_factory=list)
     eos: str = '<|eot_id|>'
+
+    @classmethod
+    def parse_from(cls, seq):
+        slot_values = [SlotValue.parse_from(subseq) for subseq in seq.split('\n')]
+        return SlotValues(slot_values=[x for x in slot_values if x is not None])
 
 @dc.dataclass
 class DiscoveredSlotValue(Sequence):
@@ -318,11 +484,23 @@ class DiscoveredSlotValue(Sequence):
     description: str
     value: str
 
+    @except_return_none
+    @classmethod
+    def parse_from(cls, seq):
+        slot, value_and_description = seq.split(': ', 1)
+        value, description = value_and_description.split('\n\t- ', 1)
+        return DiscoveredSlotValue(slot.strip(), description.strip(), value.strip())
+
 @dc.dataclass
 class DiscoveredSlotValues(Sequence):
     format = "# Additional Information Types\n* {discovered_slot_values}{eos}"
     discovered_slot_values: list[DiscoveredSlotValue] = dc.field(default_factory=list)
     eos: str = '<|eot_id|>'
+
+    @classmethod
+    def parse_from(cls, seq):
+        discoveries = [DiscoveredSlotValue.parse_from(subseq) for subseq in seq.split('\n* ')]
+        return DiscoveredSlotValues(discovered_slot_values=[x for x in discoveries if x is not None])
 
 @dc.dataclass
 class DstPrompt(Sequence):
@@ -334,25 +512,44 @@ class DstPrompt(Sequence):
 def create_dsi_sequence(
     schema: list[SchemaSlot],
     dialogue: list[DialogueTurn],
-    slot_values: list[SlotValue],
-    discovered_slot_values: list[DiscoveredSlotValue]
+    slot_values: list[SlotValue] = None,
+    discovered_slot_values: list[DiscoveredSlotValue] = None
 ):
-    return Llama3Sequence([
-        System(instruction="Identify key information in the dialogue."),
-        User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
-            instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
-        AssistantResponse(SlotValues(slot_values=slot_values)),
-        User("Identify any Additional Information Types not covered by the above Information Types."),
-        AssistantResponse(DiscoveredSlotValues(discovered_slot_values=discovered_slot_values))
-    ])
+    if slot_values is None:
+        return Llama3Sequence([
+            System(instruction="Identify key information in the dialogue."),
+            User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
+                instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
+            AssistantResponse(SlotValues(slot_values=[], eos=''))
+        ])
+    elif discovered_slot_values is None:
+        return Llama3Sequence([
+            System(instruction="Identify key information in the dialogue."),
+            User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
+                instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
+            AssistantResponse(SlotValues(slot_values=slot_values)),
+            User("Identify any Additional Information Types not covered by the above Information Types."),
+            AssistantResponse(DiscoveredSlotValues(discovered_slot_values=[], eos=''))
+        ])
+    else:
+        return Llama3Sequence([
+            System(instruction="Identify key information in the dialogue."),
+            User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
+                instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
+            AssistantResponse(SlotValues(slot_values=slot_values)),
+            User("Identify any Additional Information Types not covered by the above Information Types."),
+            AssistantResponse(DiscoveredSlotValues(discovered_slot_values=discovered_slot_values))
+        ])
 
 
 
 if __name__ == '__main__':
-    experiment = DsiExperiment(sgd_train_downsample_dialogues=10)
-    sgd_train_data = experiment.collate_sgd_for_dsi_training()
+    experiment = DsiExperiment(sgd_train_downsample_dialogues=100)
+    with ez.Timer('collation'):
+        sgd_train_data = experiment.collate_sgd_for_dsi_training()
     pl.Path('ex/sgd_train_collated.json').write_text(json.dumps([vars(x) for x in sgd_train_data], indent=2))
-    tokens = experiment.tokenize_collated_data(sgd_train_data)
+    with ez.Timer('tokenization'):
+        tokens = experiment.tokenize_collated_data(sgd_train_data)
     nl = '\n'
     pl.Path('ex/sgd_train_tokens.json').write_text(''.join([
         '[\n  ',

@@ -18,8 +18,17 @@ def depluralize(word):
             nltk.download('wordnet')
         lemmatizer = WordNetLemmatizer()
     # Lemmatize the word as a noun
-    singular = lemmatizer.lemmatize(word, pos='n')
+    singular = lemmatizer.lemmatize(word.lower(), pos='n')
+    if word[:1].isupper():
+        singular = singular[:1].upper()+singular[1:]
     return singular
+
+def untokenize_text(input_string):
+    for punc in '.!?,':
+        input_string = input_string.replace(f" {punc} ", f"{punc} ")
+    for suffix in ('ly', 'er', 's',):
+        input_string = input_string.replace(f" -{suffix}", suffix)
+    return input_string
 
 def textify(
     input_string, 
