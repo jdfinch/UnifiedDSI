@@ -13,42 +13,37 @@ import torch as pt
 import bitsandbytes as bnb
 import setproctitle as spt
 from tqdm import tqdm
-import dsi.mwoz24
+from dsi.mwoz24 import DsiExample, DsiData, load_mwoz_examples, eval_dsi
 import utils
 import typing as T
 
 
 @dc.dataclass
-class DsiTrainingExample:
-    dialogue_id: str
-    turn_index: int
-    schema: list[str] = dc.field(default_factory=list)
-    context: list[str] = dc.field(default_factory=list)
-    state_update: dict[str, str] = dc.field(default_factory=dict)
-    discoveries: dict[str, str] = dc.field(default_factory=dict)
-
-
-@dc.dataclass
 class DsiExperiment:
+    experiment_name: str = 'trial'
     sgd_train_data_path: str = 'data/sgd/train_wo_mwoz_doms'
     sgd_train_downsample_dialogues: int|None = None
-    proportion_training_with_predefined_schema = 0.33
-    proportion_training_without_predefined_schema = 0.33
+    proportion_training_with_predefined_schema: float = 0.33
+    proportion_training_without_predefined_schema: float = 0.33
     speaker_map: dict[str, str] = dc.field(default_factory=lambda: {
         'user': 'User', 'system': 'Agent', 'bot': 'Agent'})
     model_to_load: str = 'meta-llama/Llama-3.2-1B-Instruct'
+    epochs: int = 1
     batch_size: int = 16
     physical_batch_size: int = 16
     learning_rate: float = 1e-4
     weight_decay: float = 0.0
     optimizer_quantization: str|None = '8bit'
     warmup: int = 10
+    max_seq_len: int = 2048
     decoding_beams: int = 1
     decoding_repetition_penalty: float = 1.2
     decoding_length_penalty: float = 0.0
     base_model_repo_id: str = 'meta-llama/Llama-3.2-1B-Instruct'
     root_path: str = '/local/scratch/jdfinch'
     project_path: str = '/local/scratch/jdfinch/2025/UnifiedDSI'
+    num_mwoz_valid_dials: int = 5
+    steps_to_validate_on: tuple[int] = (100, 200, 300)
     device: str|int = 'cuda'
     rng_seed: int = 42
 
@@ -57,17 +52,48 @@ class DsiExperiment:
         os.environ['HF_HOME'] = str(pl.Path(self.root_path)/'.cache')
         self.tokenizer: hf.LlamaTokenizer = None
 
+    def run(self):
+        spt.setproctitle(self.experiment_name)
+        self.load_model()
+        sgd_train_data = self.collate_sgd_for_dsi_training()
+        sgd_train_data = self.standardize_dsi_examples(sgd_train_data)
+        valid_data = load_mwoz_examples(data_path='data/multiwoz24/dev_dials.json', 
+            downsample_dialogues=self.num_mwoz_valid_dials, rng=self.rng)
+        valid_data = self.standardize_dsi_examples(valid_data, slots_have_descriptions=False)
+        step = 0
+        for epoch, steps in enumerate(self.dsi_training(sgd_train_data), 1):
+            for epoch_step, nll in enumerate(steps, 1):
+                step += 1
+                if step in self.steps_to_validate_on:
+                    self.validate(valid_data=valid_data, step=step)
+        self.validate(valid_data=valid_data, step=step)
+    
+    def validate(self, valid_data: list[DsiExample], step: int):
+        experiment_step_path = pl.Path(self.project_path)/'ex'/self.experiment_name/str(step)
+        self.model.save_pretrained(experiment_step_path)
+        (experiment_step_path/'experiment.json').write_text(json.dumps(
+            {f.name: getattr(self, f.name) for f in dc.fields(self)}, indent=2))
+        predicted_state_updates = self.dsi_predict([x.context for x in valid_data])
+        results = eval_dsi(
+            golds={(y.dialogue_id, y.turn_index): y.state_update for y in valid_data},
+            preds={(y.dialogue_id, y.turn_index): x 
+                for y, x in zip(valid_data, predicted_state_updates)})
+        (experiment_step_path/'results.json').write_text(json.dumps(vars(results), indent=2))
+        (experiment_step_path/'predictions.json').write_text(json.dumps([
+            {**vars(y), 'predictions': x} for y, x in zip(valid_data, predicted_state_updates)
+        ]), indent=2)
+
     def load_model(self):
-        self.model: hf.LlamaForCausalLM = hf.AutoModelForCausalLM(
+        self.model: hf.LlamaForCausalLM = hf.AutoModelForCausalLM.from_pretrained(
             self.model_to_load, 
-            attn_implementation='flash_attention_2',
+            **({} if self.device == 'cpu' else dict(attn_implementation='flash_attention_2')),
             torch_dtype=pt.bfloat16,
             device_map='auto' if self.device == 'auto' else {'': self.device})
         if self.tokenizer is None:
             self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
     
-    def collate_sgd_for_dsi_training(self) -> list[DsiTrainingExample]:
-        training_examples: list[DsiTrainingExample] = []
+    def collate_sgd_for_dsi_training(self) -> list[DsiExample]:
+        training_examples: list[DsiExample] = []
         sgd_data_path = pl.Path(self.sgd_train_data_path)
         sgd_schema_path = sgd_data_path/'schema.json'
         schema_json = json.loads(sgd_schema_path.read_text())
@@ -150,9 +176,9 @@ class DsiExperiment:
                 dialogue_context = dialogue_context + [f"{speaker}: {turn_text}"]
                 if speaker == 'SYSTEM': continue
                 new_previous_state = {}
-                training_example = DsiTrainingExample(dialogue_id=dialogue_id, turn_index=i,
+                training_example = DsiExample(dialogue_id=dialogue_id, turn_index=i,
                     schema=list(dialogue_schema.values()), context=dialogue_context,
-                    state_update=dict.fromkeys(dialogue_schema.values()))
+                    state_update=dict.fromkeys(dialogue_schema.values()), discoveries={})
                 frames = turn_json['frames']
                 for frame in frames:
                     domain = frame['service']
@@ -174,36 +200,46 @@ class DsiExperiment:
                 self.rng.shuffle(discovery_list)
                 training_example.discoveries = dict(discovery_list)
                 training_examples.append(training_example)
+        return training_examples
+    
+    def standardize_dsi_examples(self, examples: list[DsiExample], slots_have_descriptions=True):
         turn_map = {}
         slot_description_map = {}
-        for training_example in training_examples:
-            for slot in training_example.schema + list(training_example.discoveries):
-                domain_slot_name, description = slot.split(': ', 1)
-                domain_name, slot_name = domain_slot_name.split(' ', 1)
-                domain_name = utils.textify(domain_name, plural_to_singular=True)
-                slot_name = utils.textify(slot_name)
-                slot_description_map[slot] = f"{domain_name} {slot_name}: {description}"
-            schema = []
-            for slot in training_example.schema:
-                schema.append(slot_description_map[slot])
+        for example in examples:
+            for slot in list(example.state_update) + (example.schema or []) + list(example.discoveries or []):
+                if slot not in slot_description_map:
+                    if slots_have_descriptions:
+                        domain_slot_name, description = slot.split(': ', 1)
+                        domain_name, slot_name = domain_slot_name.split(' ', 1)
+                        domain_name = utils.textify(domain_name, plural_to_singular=True)
+                        slot_name = utils.textify(slot_name)
+                        slot_description_map[slot] = f"{domain_name} {slot_name}: {description}"
+                    else:
+                        slot_name = utils.textify(slot, plural_to_singular=True)
+                        slot_description_map[slot] = slot_name
+            if example.schema is not None:
+                schema = []
+                for slot in example.schema:
+                    schema.append(slot_description_map[slot])
+                example.schema = schema
             context = []
-            for turn in training_example.context:
+            for turn in example.context:
                 if turn not in turn_map:
                     speaker, turn_text = turn.split(': ', 1)
                     speaker = self.speaker_map.get(speaker.lower(), speaker)
                     turn_text = utils.untokenize_text(turn_text)
                     turn_map[turn] = f"{speaker}: {turn_text}"
                 context.append(turn_map[turn])
-            state_update = {slot_description_map[k]: v for k, v in training_example.state_update.items()}
-            discoveries = {slot_description_map[k]: v for k, v in training_example.discoveries.items()}
-            training_example.schema = schema
-            training_example.context = context
-            training_example.state_update = state_update
-            training_example.discoveries = discoveries
-        return training_examples
+            example.context = context
+            state_update = {slot_description_map[k]: v for k, v in example.state_update.items()}
+            example.state_update = state_update
+            if example.discoveries is not None:
+                discoveries = {slot_description_map[k]: v for k, v in example.discoveries.items()}
+                example.discoveries = discoveries
+        return examples
 
     def tokenize_collated_data(self,
-         examples: list[DsiTrainingExample]
+         examples: list[DsiExample]
     ) -> list[list[tuple[str, int, int]]]:
         if self.tokenizer is None:
             self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
@@ -262,7 +298,7 @@ class DsiExperiment:
         return tokens_ids_labels_list
                 
 
-    def dsi_training(self, examples: list[DsiTrainingExample] = None, tokens: list[list[tuple[str, int, int]]] = None):
+    def dsi_training(self, examples: list[DsiExample] = None, tokens: list[list[tuple[str, int, int]]] = None):
         self.model.train()
         if tokens is None:
             tokens = self.tokenize_collated_data(examples=examples)
@@ -289,24 +325,27 @@ class DsiExperiment:
             for j in range(self.physical_batch_size, len(tokens_within_maxlen)+1, self.physical_batch_size):
                 i = j - self.physical_batch_size
                 steps.append((i, j))
-            gradient_accumulation_step = 0
+            gradient_accumulation_step = 1
             for i, j in tqdm(steps, f"Training (Epoch {epoch})"):
                 seqs = tokens_within_maxlen[i:j]
                 max_len_seq = max(len(x) for x in seqs)
                 max_len_seq += max_len_seq % 8  # pad to multiple of 8 for better alignment on gpu
-                seqs = [
+                seqs_data = [
                     [(0, 0, -100)]*(max_len_seq-len(seq)) + [(token, 1, label) for _, token, label in seq]
                     for seq in seqs]
                 device = 'cuda' if self.device == 'auto' else self.device
-                rotated = [pt.tensor(tensor, dtype=pt.long).to(device) for tensor in zip(*seqs)]
-                inputs = dict(zip(('input_ids', 'attention_mask', 'labels'), rotated))
-                loss = self.model(**inputs) / gradient_accumulation_steps
+                input_ids, attention_mask, labels = [
+                    [[x[i] for x in seq] for seq in seqs_data]
+                    for i in range(3)]
+                inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
+                inputs = {k: pt.tensor(v, dtype=pt.long).to(device) for k, v in inputs.items()}
+                loss = self.model(**inputs).loss / gradient_accumulation_steps
                 loss.backward()
                 if gradient_accumulation_step == gradient_accumulation_steps:
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()
-                    gradient_accumulation_step = 0
+                    gradient_accumulation_step = 1
                     yield loss.item()
                 else:
                     gradient_accumulation_step += 1
@@ -314,14 +353,18 @@ class DsiExperiment:
             yield train_one_epoch(i)
         self.model.eval()
 
-    def dsi_predict(self, contexts: list[list[str]], schema: list[str] = None):
+    def dsi_predict(self, contexts: list[list[str]], schema: list[str] = None) -> list[dict[str, str]]:
         if schema is None:
             schema = []
         generation_config = hf.GenerationConfig(
             num_beams=self.decoding_beams,
             do_sample=False,
             repetition_penalty=self.decoding_repetition_penalty,
-            length_penalty=self.decoding_length_penalty)
+            **(dict(length_penalty=self.decoding_length_penalty) if self.decoding_beams > 1 else {}),
+            max_length=self.max_seq_len,
+            eos_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=-1,
+        )
         device = 'cuda' if self.device == 'auto' else self.device
         predicted_state_updates = []
         for context in contexts:
@@ -332,19 +375,23 @@ class DsiExperiment:
             dst_prompt = create_dsi_sequence(
                 schema=schema, dialogue=dialogue, slot_values=None, discovered_slot_values=None)
             dst_prompt_tokens = self.tokenizer.encode(dst_prompt.text, add_special_tokens=False)
-            dst_prompt_tokens = pt.tensor(dst_prompt_tokens, dtype=pt.long).to(device)
-            all_tokens = self.model.generate(inputs=dst_prompt_tokens, generation_config=generation_config)
-            generated_tokens = all_tokens[len(dst_prompt_tokens):]
-            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            slot_values = SlotValues.parse_from(generated_text)
+            dst_prompt_tokens = pt.tensor([dst_prompt_tokens], dtype=pt.long).to(device)
+            attention_mask = pt.ones_like(dst_prompt_tokens, dtype=pt.long)
+            all_tokens, = self.model.generate(
+                inputs=dst_prompt_tokens, attention_mask=attention_mask, generation_config=generation_config)
+            generated_tokens = all_tokens[len(dst_prompt_tokens[0]):]
+            generated_text_state = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            slot_values = SlotValues.parse_from(generated_text_state)
             dsi_prompt = create_dsi_sequence(
                 schema=schema, dialogue=dialogue, slot_values=slot_values.slot_values, discovered_slot_values=None)
             dsi_prompt_tokens = self.tokenizer.encode(dsi_prompt.text, add_special_tokens=False)
-            dsi_prompt_tokens = pt.tensor(dsi_prompt_tokens, dtype=pt.long).to(device)
-            all_tokens = self.model.generate(inputs=dsi_prompt_tokens, generation_config=generation_config)
-            generated_tokens = all_tokens[len(dsi_prompt_tokens):]
-            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            discovered_slot_values = DiscoveredSlotValues.parse_from(generated_text)
+            dsi_prompt_tokens = pt.tensor([dsi_prompt_tokens], dtype=pt.long).to(device)
+            attention_mask = pt.ones_like(dsi_prompt_tokens, dtype=pt.long)
+            all_tokens, = self.model.generate(
+                inputs=dsi_prompt_tokens, attention_mask=attention_mask, generation_config=generation_config)
+            generated_tokens = all_tokens[len(dsi_prompt_tokens[0]):]
+            generated_text_discoveries = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            discovered_slot_values = DiscoveredSlotValues.parse_from(generated_text_discoveries)
             state_update = {}
             for slot_value in slot_values.slot_values:
                 state_update[slot_value.slot] = slot_value.value
@@ -352,6 +399,12 @@ class DsiExperiment:
                 state_update[discovery.slot] = discovery.value
                 schema.append(SchemaSlot(name=discovery.slot, description=discovery.description))
             predicted_state_updates.append(state_update)
+            print('======================================================')
+            print('\n'.join(context))
+            print('------------------------------------------------------')
+            print(generated_text_state)
+            print('------------------------------------------------------')
+            print(generated_text_discoveries)
         return predicted_state_updates
 
 
@@ -544,42 +597,15 @@ def create_dsi_sequence(
 
 
 if __name__ == '__main__':
-    experiment = DsiExperiment(sgd_train_downsample_dialogues=100)
-    with ez.Timer('collation'):
-        sgd_train_data = experiment.collate_sgd_for_dsi_training()
-    pl.Path('ex/sgd_train_collated.json').write_text(json.dumps([vars(x) for x in sgd_train_data], indent=2))
-    with ez.Timer('tokenization'):
-        tokens = experiment.tokenize_collated_data(sgd_train_data)
-    nl = '\n'
-    pl.Path('ex/sgd_train_tokens.json').write_text(''.join([
-        '[\n  ',
-        ',\n  '.join([
-            '[' + ',\n    '.join(json.dumps(x) for x in seq) + ']'
-            for seq in tokens
-        ]),
-        '\n]'
-    ]))
-
-
-
-    sequence = create_dsi_sequence(
-        schema=[SchemaSlot('category', 'type of event', ['sports', 'music']), SchemaSlot('city', 'city of event')],
-        dialogue=[
-            DialogueTurn('user', 'help me find something to do'),
-            DialogueTurn('system', 'no'),
-            DialogueTurn('user', 'what do you mean no? I want to watch a sports event in LA at 6:00')
-        ],
-        slot_values=[
-            SlotValue('category', 'music'),
-            SlotValue('city', 'LA')
-        ],
-        discovered_slot_values=[
-            DiscoveredSlotValue('time', 'the time the event starts', '6:00')
-        ]
+    experiment = DsiExperiment(
+        sgd_train_downsample_dialogues=300,
+        max_seq_len=2048,
+        physical_batch_size=4,
+        device='cuda:7',
+        epochs=1,
+        batch_size=8,
+        steps_to_validate_on=(25, 50, 100),
+        proportion_training_with_predefined_schema=0.1,
+        proportion_training_without_predefined_schema=0.8
     )
-
-    print(sequence.text)
-    print(f"{sequence.slots['SlotValue'] = }")
-    print('\n'.join(sequence.text[i:j] for i,j in sequence.slots['SlotValue']))
-    print(f"{sequence.slots['DiscoveredSlotValue'] = }")
-    print('\n'.join(sequence.text[i:j] for i,j in sequence.slots['DiscoveredSlotValue']))
+    experiment.run()
