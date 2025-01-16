@@ -90,9 +90,12 @@ class DsiEvalResults:
 
     def __post_init__(self):
         for metric in ('slot', 'value', 'value_identification'):
-            setattr(self, f"{metric}_f1", 
-                2 / (1/getattr(self, f"{metric}_precision") + 1/getattr(self, f"{metric}_recall"))
-            )
+            try:
+                setattr(self, f"{metric}_f1", 
+                    2 / (1/getattr(self, f"{metric}_precision") + 1/getattr(self, f"{metric}_recall"))
+                )
+            except (TypeError, ZeroDivisionError):
+                pass
 
 def eval_dsi(
     golds: dict[tuple[str, int], dict[str, str]], 
@@ -127,8 +130,7 @@ def eval_dsi(
             value_precision=sum(overlap_counts[match] for match in slot_matching.items())/sum(pred_slot_counts[pred] for pred in slot_matching),
             value_recall=sum(overlap_counts[match] for match in slot_matching.items())/sum(gold_slot_counts[gold] for gold in slot_matching.values()),
             value_identification_precision=sum(overlap_counts.values())/sum(pred_slot_counts.values()),
-            value_identification_recall=sum(overlap_counts.values())/sum(gold_slot_counts.values())
-        )
+            value_identification_recall=sum(overlap_counts.values())/sum(gold_slot_counts.values()))
     except ZeroDivisionError:
         results = DsiEvalResults()
     return results

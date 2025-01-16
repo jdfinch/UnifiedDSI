@@ -14,6 +14,7 @@ import bitsandbytes as bnb
 import setproctitle as spt
 from tqdm import tqdm
 from dsi.mwoz24 import DsiExample, DsiData, load_mwoz_examples, eval_dsi
+import peft
 import utils
 import typing as T
 
@@ -28,6 +29,10 @@ class DsiExperiment:
     speaker_map: dict[str, str] = dc.field(default_factory=lambda: {
         'user': 'User', 'system': 'Agent', 'bot': 'Agent'})
     model_to_load: str = 'meta-llama/Llama-3.2-1B-Instruct'
+    new_lora_rank: int|None = 1
+    new_lora_modules: tuple[str] = tuple(
+        'q_proj k_proj v_proj o_proj gate_proj up_proj down_proj'.split())
+    new_lora_dropout: float = 0.0
     epochs: int = 1
     batch_size: int = 16
     physical_batch_size: int = 16
@@ -57,6 +62,10 @@ class DsiExperiment:
         self.load_model()
         sgd_train_data = self.collate_sgd_for_dsi_training()
         sgd_train_data = self.standardize_dsi_examples(sgd_train_data)
+        experiment_path = pl.Path(self.project_path)/'ex'/self.experiment_name
+        experiment_path.mkdir(parents=True, exist_ok=True)
+        (experiment_path/'sgd_train_data.json').write_text(
+            json.dumps([vars(x) for x in self.rng.sample(sgd_train_data, min(100, len(sgd_train_data)))], indent=2))
         valid_data = load_mwoz_examples(data_path='data/multiwoz24/dev_dials.json', 
             downsample_dialogues=self.num_mwoz_valid_dials, rng=self.rng)
         valid_data = self.standardize_dsi_examples(valid_data, slots_have_descriptions=False)
@@ -81,7 +90,7 @@ class DsiExperiment:
         (experiment_step_path/'results.json').write_text(json.dumps(vars(results), indent=2))
         (experiment_step_path/'predictions.json').write_text(json.dumps([
             {**vars(y), 'predictions': x} for y, x in zip(valid_data, predicted_state_updates)
-        ]), indent=2)
+        ], indent=2))
 
     def load_model(self):
         self.model: hf.LlamaForCausalLM = hf.AutoModelForCausalLM.from_pretrained(
@@ -89,6 +98,14 @@ class DsiExperiment:
             **({} if self.device == 'cpu' else dict(attn_implementation='flash_attention_2')),
             torch_dtype=pt.bfloat16,
             device_map='auto' if self.device == 'auto' else {'': self.device})
+        if self.new_lora_rank:
+            lora_config = peft.LoraConfig(
+                r=self.new_lora_rank,
+                target_modules=list(self.new_lora_modules),
+                lora_alpha=2*self.new_lora_rank,
+                lora_dropout=self.new_lora_dropout)
+            self.model.add_adapter(lora_config)
+            self.model.set_adapter('default')
         if self.tokenizer is None:
             self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
     
@@ -144,20 +161,18 @@ class DsiExperiment:
                     del domain_counts[domain_selected]
         else:
             dialogues_json = [dial for dials in dialogues_by_domain.values() for dial in dials]
-        flags_predefined_schema = [True] * int(len(dialogues_json)*self.proportion_training_with_predefined_schema)
-        flags_schemaless = [True] * int(len(dialogues_json)*self.proportion_training_without_predefined_schema)
-        for flags in (flags_predefined_schema, flags_schemaless):
-            flags.extend([False] * int(len(dialogues_json) - len(flags)))
-            self.rng.shuffle(flags)
-        for dialogue_json, has_predefined_schema, is_schemaless in zip(
-            dialogues_json, flags_predefined_schema, flags_schemaless
-        ):
+        flags_predefined_schema = ['DST'] * int(len(dialogues_json)*self.proportion_training_with_predefined_schema)
+        flags_schemaless = ['DSG'] * int(len(dialogues_json)*self.proportion_training_without_predefined_schema)
+        flags = flags_predefined_schema + flags_schemaless + ['DSI'] * (
+            len(dialogue_json) - len(flags_schemaless) - len(flags_predefined_schema))
+        self.rng.shuffle(flags)
+        for dialogue_json, flag in zip(dialogues_json, flags):
             dialogue_id = dialogue_json['dialogue_id']
             dialogue_turns = dialogue_json['turns']
             dialogue_domains = dialogue_json['services']
-            if is_schemaless:
+            if flag == 'DSG':
                 dialogue_schema = {} # (domain, name) -> description
-            elif has_predefined_schema:
+            elif flag == 'DST':
                 dialogue_schema = [((domain, slot), description)
                     for domain in dialogue_domains for slot, description in schema[domain].items()]
                 self.rng.shuffle(dialogue_schema)
@@ -338,7 +353,7 @@ class DsiExperiment:
                     [[x[i] for x in seq] for seq in seqs_data]
                     for i in range(3)]
                 inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
-                inputs = {k: pt.tensor(v, dtype=pt.long).to(device) for k, v in inputs.items()}
+                inputs = {k: pt.tensor(v, dtype=pt.long, device=device) for k, v in inputs.items()}
                 loss = self.model(**inputs).loss / gradient_accumulation_steps
                 loss.backward()
                 if gradient_accumulation_step == gradient_accumulation_steps:
@@ -350,7 +365,7 @@ class DsiExperiment:
                 else:
                     gradient_accumulation_step += 1
         for i in range(self.epochs):
-            yield train_one_epoch(i)
+            yield train_one_epoch(i+1)
         self.model.eval()
 
     def dsi_predict(self, contexts: list[list[str]], schema: list[str] = None) -> list[dict[str, str]]:
@@ -361,9 +376,9 @@ class DsiExperiment:
             do_sample=False,
             repetition_penalty=self.decoding_repetition_penalty,
             **(dict(length_penalty=self.decoding_length_penalty) if self.decoding_beams > 1 else {}),
-            max_length=self.max_seq_len,
+            max_new_tokens=256,
             eos_token_id=self.tokenizer.eos_token_id,
-            pad_token_id=-1,
+            pad_token_id=0,
         )
         device = 'cuda' if self.device == 'auto' else self.device
         predicted_state_updates = []
@@ -375,7 +390,7 @@ class DsiExperiment:
             dst_prompt = create_dsi_sequence(
                 schema=schema, dialogue=dialogue, slot_values=None, discovered_slot_values=None)
             dst_prompt_tokens = self.tokenizer.encode(dst_prompt.text, add_special_tokens=False)
-            dst_prompt_tokens = pt.tensor([dst_prompt_tokens], dtype=pt.long).to(device)
+            dst_prompt_tokens = pt.tensor([dst_prompt_tokens], dtype=pt.long, device=device)
             attention_mask = pt.ones_like(dst_prompt_tokens, dtype=pt.long)
             all_tokens, = self.model.generate(
                 inputs=dst_prompt_tokens, attention_mask=attention_mask, generation_config=generation_config)
@@ -385,7 +400,7 @@ class DsiExperiment:
             dsi_prompt = create_dsi_sequence(
                 schema=schema, dialogue=dialogue, slot_values=slot_values.slot_values, discovered_slot_values=None)
             dsi_prompt_tokens = self.tokenizer.encode(dsi_prompt.text, add_special_tokens=False)
-            dsi_prompt_tokens = pt.tensor([dsi_prompt_tokens], dtype=pt.long).to(device)
+            dsi_prompt_tokens = pt.tensor([dsi_prompt_tokens], dtype=pt.long, device=device)
             attention_mask = pt.ones_like(dsi_prompt_tokens, dtype=pt.long)
             all_tokens, = self.model.generate(
                 inputs=dsi_prompt_tokens, attention_mask=attention_mask, generation_config=generation_config)
@@ -401,6 +416,10 @@ class DsiExperiment:
             predicted_state_updates.append(state_update)
             print('======================================================')
             print('\n'.join(context))
+            # print('------------------------------------------------------')
+            # print('|'.join(self.tokenizer.decode(token) for token in dsi_prompt_tokens[0]))
+            # print('------------------------------------------------------')
+            # print('|'.join(self.tokenizer.decode(token) for token in generated_tokens))
             print('------------------------------------------------------')
             print(generated_text_state)
             print('------------------------------------------------------')
@@ -445,16 +464,6 @@ class Sequence:
         prefix_len += len(format_suffix)
         self.slots.setdefault(seq_type_name, []).append((0, prefix_len))
         self.text: str = ''.join(sequence)
-
-
-F = T.TypeVar('F')
-def except_return_none(f: F) -> F:
-    def wrapper(*args, **kwargs):
-        try:
-            return f(*args, **kwargs)
-        except Exception:
-            return None
-    return wrapper
         
 @dc.dataclass
 class System(Sequence):
@@ -509,21 +518,23 @@ class Dialogue(Sequence):
 
 @dc.dataclass
 class SlotValue(Sequence):
-    format = "{slot}: {value}\n* "
+    format = "\n* {slot}: {value}"
     slot: str
     value: str
 
-    @except_return_none
     @classmethod
     def parse_from(cls, seq):
-        slot, value = seq.split(': ', 1)
-        return SlotValue(slot.strip(), value.strip())
+        try:
+            slot, value = seq.split(': ', 1)
+            return SlotValue(slot.strip(), value.strip())
+        except Exception as e:
+            return None
 
 @dc.dataclass
 class SlotValues(Sequence):
-    format = "# Information Values\n* {slot_values}{eos}"
+    format = "# Information Values{slot_values}{eos}"
     slot_values: list[SlotValue] = dc.field(default_factory=list)
-    eos: str = '<|eot_id|>'
+    eos: str = '\n* <|eot_id|>'
 
     @classmethod
     def parse_from(cls, seq):
@@ -532,23 +543,25 @@ class SlotValues(Sequence):
 
 @dc.dataclass
 class DiscoveredSlotValue(Sequence):
-    format = "{slot}: {value}\n\t- {description}\n* "
+    format = "\n* {slot}: {value}\n\t- {description}"
     slot: str
     description: str
     value: str
 
-    @except_return_none
     @classmethod
     def parse_from(cls, seq):
-        slot, value_and_description = seq.split(': ', 1)
-        value, description = value_and_description.split('\n\t- ', 1)
-        return DiscoveredSlotValue(slot.strip(), description.strip(), value.strip())
+        try:
+            slot, value_and_description = seq.split(': ', 1)
+            value, description = value_and_description.split('\n\t- ', 1)
+            return DiscoveredSlotValue(slot.strip(), description.strip(), value.strip())
+        except Exception as e:
+            return None
 
 @dc.dataclass
 class DiscoveredSlotValues(Sequence):
-    format = "# Additional Information Types\n* {discovered_slot_values}{eos}"
+    format = "# Additional Information Types{discovered_slot_values}{eos}"
     discovered_slot_values: list[DiscoveredSlotValue] = dc.field(default_factory=list)
-    eos: str = '<|eot_id|>'
+    eos: str = '\n* <|eot_id|>'
 
     @classmethod
     def parse_from(cls, seq):
@@ -598,13 +611,20 @@ def create_dsi_sequence(
 
 if __name__ == '__main__':
     experiment = DsiExperiment(
+        # model_to_load='ex/trial/150',
         sgd_train_downsample_dialogues=300,
         max_seq_len=2048,
         physical_batch_size=4,
         device='cuda:7',
+        new_lora_rank=1,
+        new_lora_dropout=0.0,
         epochs=1,
-        batch_size=8,
-        steps_to_validate_on=(25, 50, 100),
+        batch_size=16,
+        steps_to_validate_on=(),
+        warmup=30,
+        learning_rate=1e-4,
+        decoding_repetition_penalty=1.2,
+        decoding_beams=1,
         proportion_training_with_predefined_schema=0.1,
         proportion_training_without_predefined_schema=0.8
     )

@@ -25,9 +25,10 @@ def depluralize(word):
 
 def untokenize_text(input_string):
     for punc in '.!?,':
-        input_string = input_string.replace(f" {punc} ", f"{punc} ")
+        input_string = input_string.replace(f" {punc}", f"{punc}")
     for suffix in ('ly', 'er', 's',):
         input_string = input_string.replace(f" -{suffix}", suffix)
+    input_string = input_string.replace(' s ', 's ')
     return input_string
 
 def textify(

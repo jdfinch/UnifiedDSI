@@ -35,6 +35,38 @@ def eval_dsi(split_path: str|pl.Path, predictions: list[DialogueState]):
             ... # evaluating on SGD may not make as much sense for slot discovery because it has redundant domains
 
 
+def collect_sgdx_alternatives(
+    sgdx_path = 'data/sgd/sgd_x/data',
+    sgd_original_path = 'data/sgd'
+) -> dict[str, dict[str, dict[str, dict]]]:
+    """domain -> slot name -> alternative slot info dict"""
+    original_slots_by_domain: dict[str, list[dict]] = {} # domain -> slots json
+    for split in ('train', 'dev', 'test'):
+        sgd_schema_path = pl.Path(sgd_original_path)/split/'schema.json'
+        original_schema = json.loads(sgd_schema_path.read_text())
+        for service in original_schema:
+            domain = service['service_name']
+            original_slots_by_domain[domain] = service['slots']
+    sgdx = {
+        domain: {slot['name']: {slot['name']: slot} for slot in slots}
+        for domain, slots in original_slots_by_domain.items()
+    }
+    for version in range(1, 6):
+        version_path = pl.Path(sgdx_path)/f"v{version}"
+        for split in ('train', 'dev', 'test'):
+            schema_path = version_path/split/'schema.json'
+            schema = json.loads(schema_path.read_text())
+            for service in schema:
+                domain = service['service_name']
+                original_domain = domain[:-1]
+                original_slots = original_slots_by_domain[original_domain]
+                for slot, original_slot in zip(service['slots'], original_slots):
+                    original_slot_name = original_slot['name']
+                    slot_name = slot['name']
+                    sgdx[original_domain][original_slot_name][slot_name] = slot
+    return sgdx
+
+
 def filter_sgd(split_path, result_path, excluded_domains = (
     'Hotels_1', 'Hotels_2', 'Hotels_3', 'Hotels_4',  
     'Restaurants_1', 'Restaurants_2',
@@ -128,7 +160,12 @@ def resplit_sgd(
 
 if __name__ == '__main__':
 
-    filter_sgd('data/sgd/train', 'data/sgd/train_wo_mwoz_doms')
+    # filter_sgd('data/sgd/train', 'data/sgd/train_wo_mwoz_doms')
+    sgdx = collect_sgdx_alternatives()
+    print(sgdx)
+    pl.Path('data/sgd/sgdx.json').write_text(json.dumps(
+        sgdx
+    , indent=2))
     
     '''
     filter_sgd('data/sgd/train', 'data/sgd/train_wo_mwoz_doms')
