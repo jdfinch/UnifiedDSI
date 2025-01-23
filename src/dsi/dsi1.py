@@ -4,6 +4,7 @@ import dataclasses as dc
 import pathlib as pl
 import functools as ft
 import json
+import csv
 import random as rng
 import ezpyzy as ez
 import re
@@ -14,6 +15,8 @@ import bitsandbytes as bnb
 import setproctitle as spt
 from tqdm import tqdm
 from dsi.mwoz24 import DsiExample, DsiData, load_mwoz_examples, eval_dsi
+import dsi.seq1 as seq1
+import dsi.seq2 as seq2
 import peft
 import utils
 import typing as T
@@ -23,9 +26,13 @@ import typing as T
 class DsiExperiment:
     experiment_name: str = 'trial'
     sgd_train_data_path: str = 'data/sgd/train_wo_mwoz_doms'
+    applying_sgdx: bool = True
     sgd_train_downsample_dialogues: int|None = None
+    seq_module: str = 'seq1'
+    eval_data_path: str = 'data/multiwoz24/dev_dials.json'
     proportion_training_with_predefined_schema: float = 0.33
     proportion_training_without_predefined_schema: float = 0.33
+    train_on_dot_stage_1: bool = False
     speaker_map: dict[str, str] = dc.field(default_factory=lambda: {
         'user': 'User', 'system': 'Agent', 'bot': 'Agent'})
     model_to_load: str = 'meta-llama/Llama-3.2-1B-Instruct'
@@ -45,12 +52,14 @@ class DsiExperiment:
     decoding_repetition_penalty: float = 1.2
     decoding_length_penalty: float = 0.0
     base_model_repo_id: str = 'meta-llama/Llama-3.2-1B-Instruct'
+    quantization: str|None = 'nf4dq'
     root_path: str = '/local/scratch/jdfinch'
     project_path: str = '/local/scratch/jdfinch/2025/UnifiedDSI'
     num_mwoz_valid_dials: int = 5
     steps_to_validate_on: tuple[int] = (100, 200, 300)
     device: str|int = 'cuda'
     rng_seed: int = 42
+    git_commit_id: str = None
 
     def __post_init__(self):
         self.rng = rng.Random(self.rng_seed)
@@ -59,18 +68,29 @@ class DsiExperiment:
 
     def run(self):
         spt.setproctitle(self.experiment_name)
+        self.git_commit_id = utils.git_current_commit()
+        self.seq = globals().get(self.seq_module)
         self.load_model()
         sgd_train_data = self.collate_sgd_for_dsi_training()
+        if self.applying_sgdx: 
+            sgd_train_data = self.apply_sgdx(sgd_train_data)
         sgd_train_data = self.standardize_dsi_examples(sgd_train_data)
         experiment_path = pl.Path(self.project_path)/'ex'/self.experiment_name
         experiment_path.mkdir(parents=True, exist_ok=True)
         (experiment_path/'sgd_train_data.json').write_text(
             json.dumps([vars(x) for x in self.rng.sample(sgd_train_data, min(100, len(sgd_train_data)))], indent=2))
-        valid_data = load_mwoz_examples(data_path='data/multiwoz24/dev_dials.json', 
+        valid_data = load_mwoz_examples(data_path=self.eval_data_path, 
             downsample_dialogues=self.num_mwoz_valid_dials, rng=self.rng)
         valid_data = self.standardize_dsi_examples(valid_data, slots_have_descriptions=False)
+        dot_train_data = self.collate_dot_for_dsi_training()
+        if self.train_on_dot_stage_1:
+            for epoch, steps in enumerate(self.dsi_training(dot_train_data, domain_names_included=False), 1):
+                for epoch_step, nll in enumerate(steps, 1):
+                    pass
+                break # only 1 epoch max on d0t
+            self.validate(valid_data=valid_data, step=1)
         step = 0
-        for epoch, steps in enumerate(self.dsi_training(sgd_train_data), 1):
+        for epoch, steps in enumerate(self.dsi_training(sgd_train_data, domain_names_included=True), 1):
             for epoch_step, nll in enumerate(steps, 1):
                 step += 1
                 if step in self.steps_to_validate_on:
@@ -93,8 +113,17 @@ class DsiExperiment:
         ], indent=2))
 
     def load_model(self):
+        if self.quantization and self.quantization.startswith('nf4'):
+            quant_args = dict(quantization_config=hf.BitsAndBytesConfig(
+                load_in_4bit=True, bnb_4bit_quant_type='nf4',
+                bnb_4bit_use_double_quant=self.quantization.endswith('dq'),
+                bnb_4bit_compute_dtype=pt.bfloat16))
+        elif self.quantization == 'int8':
+            quant_args = dict(load_in_8bit=True)
+        else:
+            quant_args = {}
         self.model: hf.LlamaForCausalLM = hf.AutoModelForCausalLM.from_pretrained(
-            self.model_to_load, 
+            self.model_to_load, **quant_args,
             **({} if self.device == 'cpu' else dict(attn_implementation='flash_attention_2')),
             torch_dtype=pt.bfloat16,
             device_map='auto' if self.device == 'auto' else {'': self.device})
@@ -108,6 +137,51 @@ class DsiExperiment:
             self.model.set_adapter('default')
         if self.tokenizer is None:
             self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
+
+    def collate_dot_for_dsi_training(self, dot_data_path='data/d0t') -> list[DsiExample]:
+        examples: list[DsiExample] = []
+        tables = []
+        for table_name in('turn', 'slot', 'slot_value'):
+            with open(pl.Path(dot_data_path)/f"{table_name}.csv") as file:
+                csvreader = csv.DictReader(file)
+                table = [{col: json.loads(cell) for col, cell in row.items()} for row in csvreader]
+                table = {row[f"{table_name}_id"]: row for row in table}
+                tables.append(table)
+        turn_table, slot_table, slot_value_table = tables
+        turns_by_dialogue = {}
+        for turn in turn_table.values():
+            turns_by_dialogue.setdefault(turn['dialogue'], []).append(turn)
+        shuffled_slot_values = list(slot_value_table.values())
+        self.rng.shuffle(shuffled_slot_values)
+        slot_values_by_turn = {}
+        for slot_value in shuffled_slot_values:
+            slot_values_by_turn.setdefault(slot_value['turn_id'], []).append(slot_value)
+        for turn_id, turn in turn_table.items():
+            dialogue_id = turn['dialogue']
+            dialogue = turns_by_dialogue[dialogue_id]
+            index = turn['turn_index']
+            context = [f"{t['speaker']}: {t['text']}" for t in dialogue[:index+1]]
+            slot_values = slot_values_by_turn.get(turn_id, ())
+            slot_desc_values = []
+            for slot_value in slot_values:
+                value = slot_value['value']
+                if value == '?': continue
+                slot_id = slot_value['slot_id']
+                slot_name = slot_value['slot']
+                slot_desc = slot_table[slot_id]['description']
+                slot_desc_values.append((f"{slot_name}: {slot_desc}", value))
+            splitter = self.rng.randint(0, len(slot_desc_values))
+            dst_slot_values = dict(slot_desc_values[:splitter])
+            dsg_slot_values = dict(slot_desc_values[splitter:])
+            example = DsiExample(
+                dialogue_id=dialogue_id,
+                turn_index=index,
+                context=context,
+                schema=list(dst_slot_values),
+                state_update=dst_slot_values,
+                discoveries=dsg_slot_values)
+            examples.append(example)
+        return examples
     
     def collate_sgd_for_dsi_training(self) -> list[DsiExample]:
         training_examples: list[DsiExample] = []
@@ -217,6 +291,73 @@ class DsiExperiment:
                 training_examples.append(training_example)
         return training_examples
     
+    def apply_sgdx(
+        self,
+        examples: list[DsiExample],
+        sgdx_path = 'data/sgd/sgdx.json'
+    ) -> list[DsiExample]:
+        sgdx = json.loads(pl.Path(sgdx_path).read_text())
+        dialogue_examples: dict[str, list[DsiExample]] = {}
+        for example in examples:
+            dialogue_examples.setdefault(example.dialogue_id, []).append(example)
+        examples_covered = set()
+        for example_turns in dialogue_examples.values():
+            domains = set()
+            for example in example_turns:
+                for slot in [*(example.schema or()),*(example.state_update or()),*(example.discoveries or())]:
+                    domain, _ = slot.split(' ', 1)
+                    domains.add(domain)
+            slot_name_map = {}
+            slot_description_map = {}
+            slot_original_desc_map = {}
+            for domain in domains:
+                for original_slot_name, alternative_slot_jsons in sgdx[domain].items():
+                    alternative_slot_json = self.rng.choice(list(alternative_slot_jsons.values()))
+                    alt_slot_name = alternative_slot_json['name']
+                    alt_slot_desc = alternative_slot_json['description']
+                    slot_name_map[f"{domain} {original_slot_name}"] = f"{domain} {alt_slot_name}"
+                    slot_description_map[f"{domain} {original_slot_name}"] = alt_slot_desc
+                    slot_original_desc_map[f"{domain} {original_slot_name}"
+                        ] = alternative_slot_jsons[original_slot_name]['description']
+            for example in example_turns:
+                assert id(example) not in examples_covered
+                examples_covered.add(id(example))
+                if example.schema:
+                    schema = []
+                    for slot in example.schema:
+                        slot_domain_and_name, _ = slot.split(': ', 1)
+                        slot = slot.replace(
+                            slot_domain_and_name, slot_name_map[slot_domain_and_name]
+                        ).replace(
+                            slot_original_desc_map[slot_domain_and_name],
+                            slot_description_map[slot_domain_and_name])
+                        schema.append(slot)
+                    example.schema = schema
+                if example.state_update:
+                    state_update = {}
+                    for slot, value in example.state_update.items():
+                        slot_domain_and_name, _ = slot.split(': ', 1)
+                        slot = slot.replace(
+                            slot_domain_and_name, slot_name_map[slot_domain_and_name]
+                        ).replace(
+                            slot_original_desc_map[slot_domain_and_name],
+                            slot_description_map[slot_domain_and_name])
+                        state_update[slot] = value
+                    example.state_update = state_update
+                if example.discoveries:
+                    discoveries = {}
+                    for slot, value in example.discoveries.items():
+                        slot_domain_and_name, _ = slot.split(': ', 1)
+                        slot = slot.replace(
+                            slot_domain_and_name, slot_name_map[slot_domain_and_name]
+                        ).replace(
+                            slot_original_desc_map[slot_domain_and_name],
+                            slot_description_map[slot_domain_and_name])
+                        discoveries[slot] = value
+                    example.discoveries = discoveries
+        return examples
+
+    
     def standardize_dsi_examples(self, examples: list[DsiExample], slots_have_descriptions=True):
         turn_map = {}
         slot_description_map = {}
@@ -254,8 +395,13 @@ class DsiExperiment:
         return examples
 
     def tokenize_collated_data(self,
-         examples: list[DsiExample]
+         examples: list[DsiExample],
+         domain_names_included: bool = True
     ) -> list[list[tuple[str, int, int]]]:
+        if domain_names_included and self.seq_module == 'seq2':
+            DiscoveredSlotValue = ft.partial(self.seq.DiscoveredSlotValue, domain_last=True)
+        else:
+            DiscoveredSlotValue = self.seq.DiscoveredSlotValue
         if self.tokenizer is None:
             self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
         sequences = []
@@ -264,31 +410,37 @@ class DsiExperiment:
             for slot in example.schema:
                 name, description = slot.split(': ', 1)
                 examples = ''
-                if description.endswith(']'):
-                    description, examples = description[:-1].split(' [', 1)
-                elif description.endswith(')'):
-                    description, examples = description[:-1].split(' (', 1)
+                try:
+                    if description.endswith(']'):
+                        description, examples = description[:-1].split(' [', 1)
+                    elif description.endswith(')'):
+                        description, examples = description[:-1].split(' (', 1)
+                except Exception:
+                    pass
                 examples = examples.split(', ')
-                schema.append(SchemaSlot(name, description, examples))
+                schema.append(self.seq.SchemaSlot(name, description, examples))
             dialogue = []
             for turn in example.context:
                 speaker, text = turn.split(': ', 1)
-                dialogue.append(DialogueTurn(speaker, text))
+                dialogue.append(self.seq.DialogueTurn(speaker, text))
             slot_values = []
             for slot, value in example.state_update.items():
                 slot = slot.split(': ', 1)[0]
-                slot_values.append(SlotValue(slot, value))
+                slot_values.append(self.seq.SlotValue(slot, value))
             discovered_slot_values = []
             for slot, value in example.discoveries.items():
                 slot, description = slot.split(': ', 1)
                 examples = ''
-                if description.endswith(']'):
-                    description, examples = description[:-1].split(' [', 1)
-                elif description.endswith(')'):
-                    description, examples = description[:-1].split(' (', 1)
+                try:
+                    if description.endswith(']'):
+                        description, examples = description[:-1].split(' [', 1)
+                    elif description.endswith(')'):
+                        description, examples = description[:-1].split(' (', 1)
+                except Exception:
+                    pass
                 examples = examples.split(', ')
                 discovered_slot_values.append(DiscoveredSlotValue(slot, description, value))
-            sequences.append(create_dsi_sequence(schema, dialogue, slot_values, discovered_slot_values))
+            sequences.append(self.seq.create_dsi_sequence(schema, dialogue, slot_values, discovered_slot_values))
         sequence_texts = [seq.text for seq in sequences]
         with ez.Timer('huggingface tokenization'):
             sequence_tokens = self.tokenizer.batch_encode_plus(
@@ -313,10 +465,10 @@ class DsiExperiment:
         return tokens_ids_labels_list
                 
 
-    def dsi_training(self, examples: list[DsiExample] = None, tokens: list[list[tuple[str, int, int]]] = None):
+    def dsi_training(self, examples: list[DsiExample] = None, tokens: list[list[tuple[str, int, int]]] = None, domain_names_included=True):
         self.model.train()
         if tokens is None:
-            tokens = self.tokenize_collated_data(examples=examples)
+            tokens = self.tokenize_collated_data(examples=examples, domain_names_included=domain_names_included)
         tokens_within_maxlen = [x for x in tokens if len(x) < self.max_seq_len]
         if len(tokens_within_maxlen) < len(tokens):
             print(f"Filtered out {len(tokens) - len(tokens_within_maxlen)}/{len(tokens)} sequences over max_seq_len {self.max_seq_len}")
@@ -386,8 +538,8 @@ class DsiExperiment:
             dialogue = []
             for turn in context:
                 speaker, text = turn.split(': ', 1)
-                dialogue.append(DialogueTurn(speaker, text))
-            dst_prompt = create_dsi_sequence(
+                dialogue.append(self.seq.DialogueTurn(speaker, text))
+            dst_prompt = self.seq.create_dsi_sequence(
                 schema=schema, dialogue=dialogue, slot_values=None, discovered_slot_values=None)
             dst_prompt_tokens = self.tokenizer.encode(dst_prompt.text, add_special_tokens=False)
             dst_prompt_tokens = pt.tensor([dst_prompt_tokens], dtype=pt.long, device=device)
@@ -396,8 +548,8 @@ class DsiExperiment:
                 inputs=dst_prompt_tokens, attention_mask=attention_mask, generation_config=generation_config)
             generated_tokens = all_tokens[len(dst_prompt_tokens[0]):]
             generated_text_state = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            slot_values = SlotValues.parse_from(generated_text_state)
-            dsi_prompt = create_dsi_sequence(
+            slot_values = self.seq.SlotValues.parse_from(generated_text_state)
+            dsi_prompt = self.seq.create_dsi_sequence(
                 schema=schema, dialogue=dialogue, slot_values=slot_values.slot_values, discovered_slot_values=None)
             dsi_prompt_tokens = self.tokenizer.encode(dsi_prompt.text, add_special_tokens=False)
             dsi_prompt_tokens = pt.tensor([dsi_prompt_tokens], dtype=pt.long, device=device)
@@ -406,226 +558,90 @@ class DsiExperiment:
                 inputs=dsi_prompt_tokens, attention_mask=attention_mask, generation_config=generation_config)
             generated_tokens = all_tokens[len(dsi_prompt_tokens[0]):]
             generated_text_discoveries = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            discovered_slot_values = DiscoveredSlotValues.parse_from(generated_text_discoveries)
+            discovered_slot_values = self.seq.DiscoveredSlotValues.parse_from(generated_text_discoveries)
             state_update = {}
             for slot_value in slot_values.slot_values:
                 state_update[slot_value.slot] = slot_value.value
             for discovery in discovered_slot_values.discovered_slot_values:
                 state_update[discovery.slot] = discovery.value
-                schema.append(SchemaSlot(name=discovery.slot, description=discovery.description))
+                schema.append(self.seq.SchemaSlot(name=discovery.slot, description=discovery.description))
             predicted_state_updates.append(state_update)
             print('======================================================')
-            print('\n'.join(context))
+            # print('\n'.join(context))
             # print('------------------------------------------------------')
-            # print('|'.join(self.tokenizer.decode(token) for token in dsi_prompt_tokens[0]))
-            # print('------------------------------------------------------')
-            # print('|'.join(self.tokenizer.decode(token) for token in generated_tokens))
+            print('|'.join(self.tokenizer.decode(token) for token in dsi_prompt_tokens[0]))
+            print('------------------------------------------------------')
+            print('|'.join(self.tokenizer.decode(token) for token in generated_tokens))
             print('------------------------------------------------------')
             print(generated_text_state)
-            print('------------------------------------------------------')
-            print(generated_text_discoveries)
+            # print('------------------------------------------------------')
+            # print(generated_text_discoveries)
         return predicted_state_updates
 
+    
 
-@dc.dataclass
-class Sequence:
-    def __post_init__(self):
-        slots: list[tuple[re.Match, str|Sequence|list[str|Sequence]]] = []
-        for slot, subseq in vars(self).items():
-            for match in re.finditer('{'+slot+'}', self.format):
-                slots.append((match, subseq))
-        self.slots: dict[str|tuple[str, str], list[tuple[int, int]]] = {}
-        slots.sort(key=lambda item: item[0].start())
-        seq_type_name = self.__class__.__name__
-        sequence = []
-        previous_end = 0
-        prefix_len = 0
-        for slot, subseq in slots:
-            slot_start, slot_end = slot.span()
-            slot_name = self.format[slot_start+1:slot_end-1]
-            format_seq = self.format[previous_end:slot_start]
-            sequence.append(format_seq)
-            prefix_len += len(format_seq)
-            if not isinstance(subseq, list):
-                subseq = [subseq]
-            for seq in subseq:
-                if isinstance(seq, Sequence):
-                    for subslot, spans in seq.slots.items():
-                        self.slots.setdefault(subslot, []).extend((prefix_len+i, prefix_len+j) for i,j in spans)
-                    seq = seq.text
-                else:
-                    seq = str(seq)
-                sequence.append(seq)
-                self.slots.setdefault((seq_type_name, slot_name), []).append((prefix_len, prefix_len+len(seq)))
-                prefix_len += len(seq)
-            previous_end = slot_end
-        format_suffix = self.format[previous_end:]
-        sequence.append(format_suffix)
-        prefix_len += len(format_suffix)
-        self.slots.setdefault(seq_type_name, []).append((0, prefix_len))
-        self.text: str = ''.join(sequence)
-        
-@dc.dataclass
-class System(Sequence):
-    format = "<|start_header_id|>system<|end_header_id|>\n\n{instruction}<|eot_id|>"
-    instruction: ...
+import socket as sk
 
-@dc.dataclass
-class User(Sequence):
-    format = "<|start_header_id|>user<|end_header_id|>\n\n{text}<|eot_id|>"
-    text: ...
 
-@dc.dataclass
-class AssistantContext(Sequence):
-    format = "<|start_header_id|>assistant<|end_header_id|>\n\n{text}<|eot_id|>"
-    text: ...
-
-@dc.dataclass
-class AssistantResponse(Sequence):
-    format = "<|start_header_id|>assistant<|end_header_id|>\n\n{text}"
-    text: ...
-
-@dc.dataclass
-class Llama3Sequence(Sequence):
-    format = "<|begin_of_text|>{text}"
-    text: list[System|User|AssistantContext|AssistantResponse]
-
-@dc.dataclass
-class SchemaSlot(Sequence):
-    format = "\n* {name}: {description}{examples}"
-    name: str
-    description: str
-    examples: list[str]|None = None
-    def __post_init__(self):
-        if self.examples: self.examples = f" ({', '.join(self.examples)})"
-        super().__post_init__()
-
-@dc.dataclass
-class Schema(Sequence):
-    format = "# Information Types{slots}"
-    slots: list[SchemaSlot] = dc.field(default_factory=list)
-
-@dc.dataclass
-class DialogueTurn(Sequence):
-    format = "\n{speaker}: {text}"
-    speaker: str
-    text: str
-
-@dc.dataclass
-class Dialogue(Sequence):
-    format = "# Dialogue{turns}"
-    turns: list[DialogueTurn]
-
-@dc.dataclass
-class SlotValue(Sequence):
-    format = "\n* {slot}: {value}"
-    slot: str
-    value: str
-
-    @classmethod
-    def parse_from(cls, seq):
-        try:
-            slot, value = seq.split(': ', 1)
-            return SlotValue(slot.strip(), value.strip())
-        except Exception as e:
-            return None
-
-@dc.dataclass
-class SlotValues(Sequence):
-    format = "# Information Values{slot_values}{eos}"
-    slot_values: list[SlotValue] = dc.field(default_factory=list)
-    eos: str = '\n* <|eot_id|>'
-
-    @classmethod
-    def parse_from(cls, seq):
-        slot_values = [SlotValue.parse_from(subseq) for subseq in seq.split('\n')]
-        return SlotValues(slot_values=[x for x in slot_values if x is not None])
-
-@dc.dataclass
-class DiscoveredSlotValue(Sequence):
-    format = "\n* {slot}: {value}\n\t- {description}"
-    slot: str
-    description: str
-    value: str
-
-    @classmethod
-    def parse_from(cls, seq):
-        try:
-            slot, value_and_description = seq.split(': ', 1)
-            value, description = value_and_description.split('\n\t- ', 1)
-            return DiscoveredSlotValue(slot.strip(), description.strip(), value.strip())
-        except Exception as e:
-            return None
-
-@dc.dataclass
-class DiscoveredSlotValues(Sequence):
-    format = "# Additional Information Types{discovered_slot_values}{eos}"
-    discovered_slot_values: list[DiscoveredSlotValue] = dc.field(default_factory=list)
-    eos: str = '\n* <|eot_id|>'
-
-    @classmethod
-    def parse_from(cls, seq):
-        discoveries = [DiscoveredSlotValue.parse_from(subseq) for subseq in seq.split('\n* ')]
-        return DiscoveredSlotValues(discovered_slot_values=[x for x in discoveries if x is not None])
-
-@dc.dataclass
-class DstPrompt(Sequence):
-    format = "{schema}\n\n{dialogue}\n\n{instruction}"
-    schema: Schema
-    dialogue: Dialogue
-    instruction: str = ''
-
-def create_dsi_sequence(
-    schema: list[SchemaSlot],
-    dialogue: list[DialogueTurn],
-    slot_values: list[SlotValue] = None,
-    discovered_slot_values: list[DiscoveredSlotValue] = None
-):
-    if slot_values is None:
-        return Llama3Sequence([
-            System(instruction="Identify key information in the dialogue."),
-            User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
-                instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
-            AssistantResponse(SlotValues(slot_values=[], eos=''))
-        ])
-    elif discovered_slot_values is None:
-        return Llama3Sequence([
-            System(instruction="Identify key information in the dialogue."),
-            User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
-                instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
-            AssistantResponse(SlotValues(slot_values=slot_values)),
-            User("Identify any Additional Information Types not covered by the above Information Types."),
-            AssistantResponse(DiscoveredSlotValues(discovered_slot_values=[], eos=''))
-        ])
-    else:
-        return Llama3Sequence([
-            System(instruction="Identify key information in the dialogue."),
-            User(DstPrompt(schema=Schema(slots=schema), dialogue=Dialogue(turns=dialogue), 
-                instruction="Identify Information Values in the Dialogue corresponding to the above Information Types.")),
-            AssistantResponse(SlotValues(slot_values=slot_values)),
-            User("Identify any Additional Information Types not covered by the above Information Types."),
-            AssistantResponse(DiscoveredSlotValues(discovered_slot_values=discovered_slot_values))
-        ])
+def launch(experiment_config: DsiExperiment):
+    experiments_path = pl.Path('ex')
+    existing_experiment_names = {
+        ''.join(path.name.split('_')[:-1]) for path in experiments_path.iterdir()}
+    experiment_config.experiment_name = ez.denominate(
+        existing_names=existing_experiment_names) + '_' + sk.gethostname()[:4]
+    (pl.Path('ex')/experiment.experiment_name).mkdir(exist_ok=False)
+    (pl.Path('ex')/experiment.experiment_name/'launch.json').write_text(json.dumps({
+        f.name: getattr(experiment_config, f.name) for f in dc.fields(experiment_config)}))
+    exn = experiment.experiment_name
+    os.system(f'sbatch --job-name={exn} --output=ex/{exn}/out.txt launch.sh {exn}')
+    print(f'Submitted {exn}')
 
 
 
 if __name__ == '__main__':
+    
+    ####### FOR SLURM >:o ######################################################################
+    
+    import traceback as tb
+    import sys
+
+    if len(sys.argv) > 1:
+        experiment_name = sys.argv[1]
+        try:
+            experiment = DsiExperiment(
+                **json.loads((pl.Path('ex')/experiment_name/'launch.json').read_text()))
+            experiment.device = 'cuda'
+            experiment.run()
+        except Exception as e:
+            ez.email("jamesfinch293@gmail.com", f"{experiment_name} Error", tb.format_exc())
+            raise e
+        quit()
+
+
+    ####### FOR DEBUG  :D ######################################################################
+
     experiment = DsiExperiment(
         # model_to_load='ex/trial/150',
-        sgd_train_downsample_dialogues=300,
+        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        quantization='nf4dq',
+        seq_module='seq2',
+        sgd_train_downsample_dialogues=3000,
+        train_on_dot_stage_1=False,
+        num_mwoz_valid_dials=30,
         max_seq_len=2048,
         physical_batch_size=4,
-        device='cuda:7',
+        device='cuda:6',
         new_lora_rank=1,
-        new_lora_dropout=0.0,
         epochs=1,
         batch_size=16,
-        steps_to_validate_on=(),
-        warmup=30,
+        steps_to_validate_on=(25, 50, 75, 100, 150, 200, 250) + tuple(range(300, 1000, 100)) + tuple(range(1000, 3000, 300)),
+        warmup=100,
         learning_rate=1e-4,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
-        proportion_training_with_predefined_schema=0.1,
-        proportion_training_without_predefined_schema=0.8
+        proportion_training_with_predefined_schema=0.0,
+        proportion_training_without_predefined_schema=0.5
     )
-    experiment.run()
+    
+    # experiment.run()
+    launch(experiment)

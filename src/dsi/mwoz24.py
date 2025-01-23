@@ -139,8 +139,24 @@ def eval_dsi(
 
                 
 if __name__ == '__main__':
-    mwoz_valid = load_mwoz_examples(
-        data_path='data/multiwoz24/dev_dials.json',
-        downsample_dialogues=5
+    # mwoz_valid = load_mwoz_examples(
+    #     data_path='data/multiwoz24/dev_dials.json',
+    #     downsample_dialogues=5
+    # )
+    # pl.Path('ex/mwoz24_dsi_valid.json').write_text(json.dumps([vars(x) for x in mwoz_valid], indent=2))
+
+    gendsi_outputs = json.loads(pl.Path('ex/gendsi/mwoz_discovery.json').read_text())
+    preds = {
+        (x['dialogue_id'], int(x['turn_index'])): x['pred_slot_values']
+        for x in gendsi_outputs
+    }
+    golds = {
+        (x.dialogue_id, x.turn_index): x.state_update
+        for x in load_mwoz_examples()
+    }
+    results = eval_dsi(
+        golds=golds,
+        preds=preds
     )
-    pl.Path('ex/mwoz24_dsi_valid.json').write_text(json.dumps([vars(x) for x in mwoz_valid], indent=2))
+    print(results)
+    pl.Path('ex/gendsi/results.json').write_text(json.dumps(vars(results), indent=2))

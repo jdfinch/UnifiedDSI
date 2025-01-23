@@ -4,6 +4,10 @@ import pathlib as pl
 
 lemmatizer = None
 
+plural_exceptions = {
+    'media'
+}
+
 def depluralize(word):
     """
     Converts a plural noun to its singular form using NLTK's WordNetLemmatizer.
@@ -18,7 +22,11 @@ def depluralize(word):
             nltk.download('wordnet')
         lemmatizer = WordNetLemmatizer()
     # Lemmatize the word as a noun
-    singular = lemmatizer.lemmatize(word.lower(), pos='n')
+    lower_word = word.lower()
+    if lower_word in plural_exceptions: 
+        singular = lower_word
+    else:
+        singular = lemmatizer.lemmatize(lower_word, pos='n')
     if word[:1].isupper():
         singular = singular[:1].upper()+singular[1:]
     return singular

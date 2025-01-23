@@ -1,2 +1,3 @@
 from utils.draw_concurrency_matrix import draw_concurrency_matrix
 from utils.word_form import depluralize, textify, untokenize_text
+from utils.git_current_commit import git_current_commit
