@@ -40,7 +40,7 @@ def gpt(messages: list, model="gpt-4o-mini", temperature=0.0):
     completion = api.chat.completions.create(
         model=model,
         messages=messages,
-        temperature=temperature
+        **(dict(temperature=temperature) if 'o1' not in model else {})
     )
     generated = completion.choices[0].message.content
     cache[promptkey] = generated
