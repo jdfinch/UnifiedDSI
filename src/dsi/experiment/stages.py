@@ -18,11 +18,8 @@ class TrainSGD_Resplit(dp.TrainingDataPipeline):
 @dc.dataclass
 class TrainD0T(dp.DataProcessingPipeline):
     load_path:str='data/d0t/train'
-    split_domains: dp.SplitDomains|None = dp.SplitDomains()
     downsample_dialogues: dp.DownsampleDialogues|None = None
     downsample_turns: dp.DownsampleTurns|None = None
-    concatenate_domains: dp.Concatenate|None = dp.Concatenate()
-    downsample: dp.DownsampleDialogues|None = None
     fill_negatives: dp.FillNegatives|None = dp.FillNegatives(max_negatives=5, max_negatives_factor=1.0)
     standardize_slot_names:dp.StandardizeSlotNames|None=dp.StandardizeSlotNames(add_domain_name=False)
 

@@ -12,6 +12,7 @@ import os
 import contextlib as cl
 import datetime as dt
 import setproctitle
+import socket as sk
 
 import dsi.data.structure as ds
 import dsi.data.pipelines as dp
@@ -57,6 +58,7 @@ class ExperimentConfig(ez.Config):
     best_model_epoch_step: tuple[int, int]|None = None
     timestamp: T.Any = None
     git_commit: str|None = None
+    machine_name: str|None = None
     previous_experiment: dict|None|'ExperimentConfig' = None
     follow_up_experiments: ez.MultiConfig['ExperimentConfig'] = ez.MultiConfig()
 
@@ -115,6 +117,8 @@ class Experiment(ez.ImplementsConfig, ExperimentConfig):
 
     def __post_init__(self):
         super().__post_init__()
+        if self.machine_name is None:
+            self.machine_name = sk.gethostname()
         setproctitle.setproctitle(self.name) # noqa
         self.training_examples = ''
         self.evaluation_examples = []

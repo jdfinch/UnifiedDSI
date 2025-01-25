@@ -1,4 +1,6 @@
 
+
+
 from __future__ import annotations
 
 import random as rng
@@ -43,6 +45,7 @@ experiment = ex.ExperimentConfig(
     criterion_for_best_model=('valid_dst_sgd_resplit', 'mean_joint_goal_accuracy'),
     validate_every_n_steps=[100, 300, 500, 1000],
     validate_every_epoch=True,
+    train_d0t=ex.TrainD0T(),
     train_sgd_resplit=ex.TrainSGD_Resplit(),
     valid_dst_sgd_resplit=ex.ValidDST_SGD_Resplit(pipe=dp.DST_PerDomainEvaluationDataPipeline(
         downsample=dp.DownsampleDialogues(n=30)

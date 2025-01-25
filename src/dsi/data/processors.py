@@ -44,7 +44,7 @@ class DownsampleDialogues(DataProcessor):
     def process(self, data: ds.DSTData) -> ds.DSTData:
         if self.n is None: return data
         assert isinstance(self.n, int)
-        sample = set(self.rng.sample(list(data.dialogues), self.n))
+        sample = set(self.rng.sample(list(data.dialogues), min(self.n, len(data.dialogues))))
         data.dialogues = {k: v for k, v in data.dialogues.items() if k in sample}
         data.turns = {k: v for k,v in data.turns.items() if v.dialogue_id in sample}
         data.slot_values = {k: v for k,v in data.slot_values.items() if v.turn_dialogue_id in sample}
@@ -88,10 +88,9 @@ class FillNegatives(DataProcessor):
     def process(self, data: ds.DSTData) -> ds.DSTData:
         for dialogue in data.dialogues.values():
             for turn in dialogue.turns:
-                negatives = [slot for slot in turn.schema() if not any(
-                    slot is slot_value.slot for slot_value in turn.slot_values
-                        if slot_value.value not in ('N/A', None)
-                )]
+                positives = {(sv.slot_domain, sv.slot_name) for sv in turn.slot_values
+                    if sv.value not in ('N/A', None)}
+                negatives = [slot for slot in turn.schema() if (slot.domain, slot.name) not in positives]
                 if not negatives:
                     continue
                 num_negatives_cands = []
@@ -99,7 +98,7 @@ class FillNegatives(DataProcessor):
                     num_negatives_cands.append(self.max_negatives)
                 if isinstance(self.max_negatives_factor, float):
                     num_positives = len(turn.slot_values)
-                    num_negatives_cands.append(num_positives * self.max_negatives_factor)
+                    num_negatives_cands.append(int(num_positives * self.max_negatives_factor))
                 if num_negatives_cands:
                     num_negatives = min(len(negatives), max(num_negatives_cands))
                     negatives = self.rng.sample(negatives, num_negatives)
@@ -144,7 +143,7 @@ class SelectDomains(DataProcessor):
         assert self.domains is not None
         domains_set = set(self.domains)
         if not self.including:
-            domains_set = set(data.domains()) - domains_set
+            domains_set = set(data.domains) - domains_set
         if self.filter_dialogues:
             data.dialogues = {k:v for k,v in data.dialogues.items() if set(v.domains()).issubset(domains_set)}
             data.turns = {k:v for k,v in data.turns.items() if v.dialogue_id in data.dialogues}

@@ -37,7 +37,7 @@ class DST_PerDomainEvaluation(ez.Config):
         self.rng = rng.Random()
 
     def __str__(self):
-        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains())} ({len(self.pipe.data.turns)} turns)"
+        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains)} ({len(self.pipe.data.turns)} turns)"
     __repr__=__str__
 
     def eval(self, approach):
@@ -58,7 +58,7 @@ class DST_PerDomainEvaluation(ez.Config):
         subevaluations = []
         domains = {}
         for i, domain_data in enumerate(dp.SplitDomains().process(self.pipe.data)):
-            domain, = domain_data.domains()
+            domain, = domain_data.domains
             domains[domain] = domains
             if self.pred_save_path:
                 pred_save_name = ''.join(c for c in domain.replace(' ', '_') if c.isalnum() or c in '_-')
@@ -112,7 +112,7 @@ class DST_Evaluation(ez.Config):
         self.examples = {} # (dialogue_id, turn_index) -> str example
 
     def __str__(self):
-        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains())} ({len(self.pipe.data.turns)} turns)"
+        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains)} ({len(self.pipe.data.turns)} turns)"
     __repr__=__str__
 
     def eval(self, approach, golds: ds.DSTData = None):

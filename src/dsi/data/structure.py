@@ -37,8 +37,10 @@ class Turn:
 
     def schema(self):
         if self.domains is not None:
-            return [slot for (domain, slot_name), slot in self.dialogue.data.slots.items()
-                if domain in self.domains]
+            schema = []
+            for domain in self.domains:
+                schema.extend(self.dialogue.data.domains[domain])
+            return schema
         else:
             return self.dialogue.data.schema()
 
@@ -149,12 +151,6 @@ class DSTData:
     slots: dict[tuple[str, str], Slot] = None  # (domain, name)
     slot_values: dict[tuple[str, int, str, str], SlotValue] = None # (dialogue_id, turn_index, domain, slot_name)
 
-    def domains(self):
-        all_domains = set()
-        for slot in self.slots.values():
-            all_domains.add(slot.domain)
-        return all_domains
-
     def schema(self):
         return list(self.slots.values())
 
@@ -216,6 +212,9 @@ class DSTData:
             slot_value.slot = self.slots[slot_value.slot_domain, slot_value.slot_name]
             slot_value.turn = self.turns[slot_value.turn_dialogue_id, slot_value.turn_index]
             slot_value.turn.slot_values.append(slot_value)
+        self.domains = {}
+        for slot in self.slots.values():
+            self.domains.setdefault(slot.domain, []).append(slot)
         return self
 
 

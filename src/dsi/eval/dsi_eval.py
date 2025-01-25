@@ -39,7 +39,7 @@ class DSI_Evaluation(ez.Config):
         self.examples = {}
 
     def __str__(self):
-        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains())} ({len(self.pipe.data.turns)} turns)"
+        return f"{self.__class__.__name__} on {self.pipe.data.path} {', '.join(self.pipe.data.domains)} ({len(self.pipe.data.turns)} turns)"
     __repr__=__str__
 
     def eval(self, approach):

@@ -6,6 +6,7 @@ import os
 import ezpyzy as ez
 
 from dsi.experiment.experiment import ExperimentConfig
+import dsi.utils.remote as rem
 
 
 experimnts_path = pl.Path('ex')
@@ -21,3 +22,7 @@ def launch(experiment_config: ExperimentConfig):
     experiment_config.configured.save(path=pl.Path(experiment_config.path)/'launch.json')
     os.system(f'cp -r src {experiment_config.path}')
     os.system(f'sbatch --job-name={experiment_config.name} src/dsi/launch/launch.sh {experiment_config.name}')
+
+
+def remote_launch(experiment_config: ExperimentConfig, machine='tebuna'):
+    ...
