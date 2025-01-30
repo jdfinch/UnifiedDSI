@@ -2,9 +2,13 @@
 import dataclasses as dc
 import re
 
+import typing as T
+
 
 @dc.dataclass
 class Sequence:
+    format: T.ClassVar[str]
+
     def __post_init__(self):
         slots: list[tuple[re.Match, str|Sequence|list[str|Sequence]]] = []
         for slot, subseq in vars(self).items():
@@ -28,7 +32,7 @@ class Sequence:
                 if isinstance(seq, Sequence):
                     for subslot, spans in seq.slots.items():
                         self.slots.setdefault(subslot, []).extend((prefix_len+i, prefix_len+j) for i,j in spans)
-                    seq = seq.text
+                    seq = seq.text # noqa
                 else:
                     seq = str(seq)
                 sequence.append(seq)

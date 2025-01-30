@@ -25,7 +25,7 @@ if cache_file.exists():
 else:
     cache = {}
 
-def save_cache(cachemax=200):
+def save_cache(cachemax=1000):
     cache_file.write_text(cache_sep.join(
         k+cache_sep+v for k,v in list(reversed(cache.items()))[:cachemax]))
 

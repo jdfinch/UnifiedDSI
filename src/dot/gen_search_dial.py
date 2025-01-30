@@ -4,10 +4,17 @@ import dataclasses as dc
 import inspect as ins
 from pathlib import Path
 import re
+import copy as cp
 import random as rng
 import itertools as it
 import textwrap as tw
 import ezpyzy as ez
+import functools as ft
+import traceback as tb
+import sys
+import typing as T
+
+import dot.code.dialogue_scenario as dialogue_scenario_module
 
 assert Path.cwd().name == 'UnifiedDSI'
 
@@ -18,11 +25,13 @@ You are an assistant software designer, assisting the user to design software. T
 
 python_code_blocks_pattern = re.compile(r'```python(\n[^`]*)```')
 
-default_rng_seed = 42
+default_rng_seed = None
+
+gpt = ft.partial(gpt, model='gpt-4o-mini')
 
 
 @dc.dataclass
-class SearchDomainSchemaGeneration:
+class SearchDialogueGeneration:
     searcher: str
     recommender: str
     dialogue: str
@@ -47,9 +56,47 @@ class SearchDomainSchemaGeneration:
         self.py_database: str = None
         self.obj_database: list = None
         self.obj_goal_item: ... = None
+        self.txt_goal_item: str = None
+        self.py_red_herrings: str = None
+        self.obj_red_herrings: list = None
+        self.txt_database: str = None
         self.py_preferences: str = None
         self.obj_preferences: ... = None
+        self.txt_preferences: str = None
+        self.context: list[str] = []
+        self.py_search_annotations: list[str] = []
+        self.obj_search_annotations: list = []
+        self.txt_task_status: list[str] = []
+        self.category_task_status: T.Literal['incomplete', 'complete', 'failed'] = 'incomplete'
         self.rng = rng.Random(self.rng_seed)
+        self.discovered_docstrings = {}
+
+    def interpret(self, code, temporary_namespace=True):
+        namespace = dict(self.code_namespace) if temporary_namespace else self.code_namespace
+        old_namespace = dict(namespace)
+        for py_code_block in python_code_blocks_pattern.findall(code):
+            exec(py_code_block, namespace)
+        new_code_objects = {k: v for k, v in namespace.items()
+            if k not in old_namespace or old_namespace[k] is not v}
+        return new_code_objects
+
+    def parse_out_field_docstrings_and_put_in_field__doc__(self, sourcecode, dataclass):
+        docstrings = []
+        previous_line = ''
+        for line in sourcecode.splitlines():
+            if previous_line.lstrip().startswith('def '):
+                pass
+            elif previous_line.lstrip().startswith('class '):
+                pass
+            elif line.lstrip().startswith('"""'):
+                docstrings.append(line.strip().strip('"'))
+            elif line.lstrip().startswith("'''"):
+                docstrings.append(line.strip().strip("'"))
+            previous_line = line
+        for dc_field, docstring in zip(
+            dc.fields(dataclass), docstrings
+        ):
+            self.discovered_docstrings[id(dc_field)] = docstring
 
 ########################################################################################################
 
@@ -59,10 +106,10 @@ class SearchDomainSchemaGeneration:
             system_code_prompt,
             user(
 f"""
-{self.dialogue.rstrip('.')}. During the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {', '.join(self.criteria)}, etc. Write a python dataclass to represent their criteria and preferences for finding a {self.item_type}, where each preference or criterion is represented as an optional field. Use typing.Literal to represent when there are a fixed set of possible preference values. Under each field, write a docstring description of the field. Do not instantiate the dataclass, implement any methods, or print anything.
+{self.dialogue.rstrip('.')}. During the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {', '.join(self.criteria)}, etc. Write a python dataclass to represent their criteria and preferences for finding a {self.item_type}, where each preference or criterion is represented as an optional field. Make sure to include all the details needed for the {self.searcher} to find and use the right {self.item_type}. Use typing.Literal to represent when there are a fixed set of possible preference values. Include a field called "name", in case the {self.searcher} is looking for a specific {self.item_type}. Under each field, write a docstring description of the field. Do not instantiate the dataclass, implement any methods, or print anything.
 """
             )
-        ])
+        ], temperature=0.8, model='gpt-4o')
         old_namespace = dict(self.code_namespace)
         for py_code_block in python_code_blocks_pattern.findall(self.py_preference_schema):
             exec(py_code_block, self.code_namespace)
@@ -72,6 +119,8 @@ f"""
             if dc.is_dataclass(new_code_object):
                 self.obj_preference_schema = new_code_object
         assert self.obj_preference_schema is not None
+        self.parse_out_field_docstrings_and_put_in_field__doc__(
+            self.py_preference_schema, self.obj_preference_schema)
         return self.py_preference_schema
 
 ########################################################################################################
@@ -87,7 +136,7 @@ f"""
 {self.dialogue.rstrip('.')}. During the conversation, the {self.searcher} needs help searching for a {self.item_type}. Based on the {self.searcher}'s search critera, represented by the above dataclass, write another python dataclass to represent the {self.recommender}'s knowledge of each {self.item_type}. Set all fields to None by default to represent missing information. Implement a single method, `def matches_criteria`, which takes the search criteria object as its only input and returns a bool. Do not instantiate the dataclass or print anything.
 """
             )
-        ])
+        ], temperature=0.8, model='gpt-4o')
         old_namespace = dict(self.code_namespace)
         for py_code_block in python_code_blocks_pattern.findall(self.py_database_schema):
             exec(py_code_block, self.code_namespace)
@@ -102,40 +151,9 @@ f"""
             callable(self.obj_database_schema.matches_criteria),
             len(ins.signature(self.obj_database_schema.matches_criteria).parameters) == 2
         ))
+        self.parse_out_field_docstrings_and_put_in_field__doc__(
+            self.py_database_schema, self.obj_database_schema)
         return self.py_database_schema
-
-########################################################################################################
-
-
-    def gen_schema_mapping(self):
-        self.py_schema_mapping = gpt([
-            system_code_prompt,
-            user(
-f"""
-Criteria:
-{self.py_preference_schema}
-
-{self.item_type}:
-{self.py_database_schema}
-
-The above 2 dataclasses are used to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. During the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {', '.join(self.criteria)}, etc. Based on the field definitions and matches_criteria method, create two python dictionaries to map analogous fields between the classes:
-
-1. Map field names from the {self.obj_database_schema} class to the {self.obj_preference_schema} class that must exactly match in order for `matches_criteria` to return True: `exact_match_fields: dict[str, str] = {{...
-2. Map field names from the {self.obj_database_schema} class to the {self.obj_preference_schema} class that are compared in `matches_criteria` to determine a match or not: `compared_fields: dict[str, list[str]] = {{...
-"""
-            )
-        ])
-        old_namespace = dict(self.code_namespace)
-        for py_code_block in python_code_blocks_pattern.findall(self.py_schema_mapping):
-            exec(py_code_block, self.code_namespace)
-        new_code_objects = {k: v for k, v in self.code_namespace.items() 
-            if k not in old_namespace or old_namespace[k] is not v}
-        assert 'exact_match_fields' in new_code_objects and 'compared_fields' in new_code_objects
-        self.obj_exact_field_mapping = new_code_objects['exact_match_fields']
-        self.obj_compared_fields_mapping = new_code_objects['compared_fields']
-        return self.py_schema_mapping
-    
-
 
 ########################################################################################################
 
@@ -143,14 +161,18 @@ The above 2 dataclasses are used to simulate the following conversation scenario
     def gen_database_objects(self):
         self.py_database = gpt([
             system_code_prompt,
+            *list(reversed([
+                role(text) for role, text
+                in zip(it.cycle((assistant, user)), reversed(self.context))
+            ])),
             user(
 f"""
 {self.py_database_schema}
 
-We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. During the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {', '.join(self.criteria)}, etc. Above is a dataclass we will use to represent each {self.item_type}. Create a global variable that is a list of {self.item_type} examples using the above dataclass to represent the knowledge or data that {self.recommender} has access to. If possible, include at least 10 examples to provide different cases for the simulation. Do not print anything.
+We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {', '.join(self.criteria)}, etc. Above is a dataclass we will use to represent each {self.item_type}. Create a global variable that is a list of {self.item_type} examples using the above dataclass to represent the knowledge or data that {self.recommender} has access to. If possible, include at least 10 examples to provide different cases for the simulation. Do not print anything.
 """
             )
-        ])
+        ], temperature=0.5)
         old_namespace = dict(self.code_namespace)
         for py_code_block in python_code_blocks_pattern.findall(self.py_database):
             exec(py_code_block, self.code_namespace)
@@ -161,40 +183,95 @@ We are trying to simulate the following conversation scenario: {self.dialogue.rs
                 self.obj_database = new_code_object
         assert self.obj_database
         assert all(isinstance(x, self.obj_database_schema) for x in self.obj_database)
+        self.rng.shuffle(self.obj_database)
         self.obj_goal_item = self.rng.choice(self.obj_database)
-        if self.rng.random() < self.percent_remove_goal_item_from_database:
-            self.obj_database.remove(self.obj_goal_item)
+        self.txt_goal_item = self.dataclass_obj_to_txt(self.obj_goal_item)
         return self.py_database
-    
 
+    def dataclass_obj_to_txt(self, db_item, comment_dont_care=False):
+        fields = []
+        for f in dc.fields(db_item):
+            value = getattr(db_item, f.name)
+            fieldstr = f"    {f.name}={repr(value)},"
+            if comment_dont_care and value is None:
+                fieldstr += " # any (no preference)"
+            fields.append(fieldstr)
+        return '\n'.join([
+            f"{db_item.__class__.__name__}(",
+            *fields,
+            ')'
+        ])
+
+########################################################################################################
+
+
+    def gen_database_red_herrings(self):
+        self.py_red_herrings = gpt([
+            system_code_prompt,
+            *list(reversed([
+                role(text) for role, text
+                in zip(it.cycle((assistant, user)), reversed(self.context))
+            ])),
+            user(
+f"""
+{self.py_database_schema}
+
+We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {', '.join(self.criteria)}, etc. Above is a dataclass we will use to represent each {self.item_type}. Here is the actual {self.item_type} the {self.searcher} is looking for:
+
+ ```python
+ f"target_{self.obj_database_schema.__name__.lower()} = {self.txt_goal_item}"
+ ```
+
+Create a global variable that is a list of {self.item_type} examples using the above dataclass to represent similar {self.item_type} search results that might come up when looking for the above target {self.item_type}. The list should have 3 similar {self.obj_database_schema.__name__} objects that each have only one or two fields different from the target. Do not print anything.
+"""
+            )
+        ], temperature=0.5)
+        old_namespace = dict(self.code_namespace)
+        for py_code_block in python_code_blocks_pattern.findall(self.py_red_herrings):
+            exec(py_code_block, self.code_namespace)
+        new_code_objects = {k: v for k, v in self.code_namespace.items()
+            if k not in old_namespace or old_namespace[k] is not v}
+        for new_code_object in new_code_objects.values():
+            if isinstance(new_code_object, list):
+                self.obj_red_herrings = new_code_object
+        assert self.obj_red_herrings
+        assert all(isinstance(x, self.obj_database_schema) for x in self.obj_red_herrings)
+        self.obj_database.extend(self.obj_red_herrings)
+        self.rng.shuffle(self.obj_database)
+        self.obj_goal_item = self.rng.choice(self.obj_red_herrings)
+        self.txt_goal_item = self.dataclass_obj_to_txt(self.obj_goal_item)
+        self.txt_database = '\n'.join([
+            f"{self.obj_database_schema.__name__.lower()}_options = [",
+            *[f"    {x}," for x in self.obj_database],
+            "]"
+        ])
+        return self.py_red_herrings
 
 ########################################################################################################
 
 
     def gen_preference_object(self):
-        formatted_target_repr = '\n'.join([
-            f"{self.obj_goal_item.__class__.__name__}(",
-            *[f"    {f.name}={repr(getattr(self.obj_goal_item, f.name))}," 
-                for f in dc.fields(self.obj_goal_item)],
-            ')'
-        ])
         py_database_schema_and_target = (
             python_code_blocks_pattern.findall(self.py_database_schema)[-1]
             + '\n\n' +
-            f"target_{self.obj_database_schema.__name__.lower()} = {formatted_target_repr}"
+            f"target_{self.obj_database_schema.__name__.lower()} = {self.txt_goal_item}"
         )
         self.py_preferences = gpt([
             system_code_prompt,
+            *list(reversed([
+                role(text) for role, text
+                in zip(it.cycle((assistant, user)), reversed(self.context))
+            ])),
             user(
 f"""
 {self.py_preference_schema}
 
-We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. During the conversation, the {self.searcher} needs help searching for a specific {self.item_type}. Using the above dataclass  to represent the preferences of the {self.searcher}, instantiate a {self.obj_preference_schema.__name__} object like `preferences = {self.obj_preference_schema.__name__}(...)` to represent what the {self.searcher} might be looking for that will match the below search target {self.obj_database_schema.__name__}:
+We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, you, the {self.searcher}, need help searching for a specific {self.item_type}. Using the above dataclass to represent the preferences of the {self.searcher}, instantiate a {self.obj_preference_schema.__name__} object like `preferences = {self.obj_preference_schema.__name__}(...)` to represent what the {self.searcher} might be looking for that will match the below search target {self.obj_database_schema.__name__}:
 
 {py_database_schema_and_target}
 """
             )
-        ])
+        ], temperature=0.5)
         old_namespace = dict(self.code_namespace)
         for py_code_block in python_code_blocks_pattern.findall(self.py_preferences):
             exec(py_code_block, self.code_namespace)
@@ -204,13 +281,45 @@ We are trying to simulate the following conversation scenario: {self.dialogue.rs
             if isinstance(new_code_object, self.obj_preference_schema):
                 self.obj_preferences = new_code_object
         assert self.obj_preferences is not None
-        assert self.obj_goal_item.matches_criteria(self.obj_preferences)
+        if hasattr(self.obj_preferences, 'name') and self.rng.random() < 0.9:
+            self.obj_preferences.name = None
+        if self.rng.random() < 0.7:
+            n_dont_cares = 0
+        else:
+            n_dont_cares = self.rng.randint(1, 4)
+        fields = list(vars(self.obj_preferences))
+        self.rng.shuffle(fields)
+        dont_care_fields = fields[:n_dont_cares]
+        for dont_care_field in dont_care_fields:
+            setattr(self.obj_preferences, dont_care_field, None)
+        # assert self.obj_goal_item.matches_criteria(self.obj_preferences)
+        self.txt_preferences = self.dataclass_obj_to_txt(self.obj_preferences, comment_dont_care=True)
         return self.py_preferences
 
 ########################################################################################################
 
 
-    def gen_searcher_turn(self, history):
+    def gen_searcher_turn(self, reiterate_task=False):
+        if reiterate_task:
+            last_turn = self.context[-1]
+            task_reiteration = [
+                assistant(
+f"""
+(now I need to move on to the next part of the conversation where I look for a {self.item_type})
+"""
+                ),
+                user(
+f"""
+Continue the conversation as the {self.searcher} that we have been having, but now ask for my help to look for a suitable {self.item_type} based on these criteria:
+
+{self.txt_preferences} 
+
+Your responses should be extremely short and spoken out loud. Only share or request one or two pieces of information at a time. It is also OK to just acknowledge the user to allow them to express themselves. Go ahead and resume the next part of our conversation now. Do NOT say hi: we are already in the middle of talking! So make sure you continue our conversation naturally by responding to the last thing I said: "{last_turn}"
+"""
+                )
+            ]
+        else:
+            task_reiteration = []
         response = gpt([
             system(
 f"""
@@ -218,23 +327,25 @@ Scenario: {self.dialogue}
 
 {self.py_preference_schema}
 
-You are the {self.searcher} and the user is the {self.recommender}. Have a casual, everyday chat with the user in order to find a suitable {self.item_type} based on these criteria:
+You are the {self.searcher} and the user is the {self.recommender}. Have a casual, everyday chat with the {self.recommender} in order to find a suitable {self.item_type} based on these criteria:
 
-{self.py_preferences}
+{self.txt_preferences}
 
-Your responses should be short and spoken out loud. Only share or request one or two pieces of information at a time. It is also OK to just acknowledge the user to allow them to express themselves.
+The conversation is complete once you, the {self.searcher}, have finalized your choice of {self.item_type} based on the above criteria. Find a suitable {self.item_type} by sharing your preferences with the {self.recommender}. You are allowed to change your preferences ONLY if you are sure that you cannot find a {self.item_type} that meets all of your requirements. 
+
+Respond in one line only (one-line responses). Your responses should be extremely short and spoken out loud. Do NOT share all of your preferences at once: only share or request one or two pieces of information at a time. It is also OK to just answer the {self.recommender}'s questions in order to allow them to talk more.
 """
             )
         ] + list(reversed([
-            role(text) for role, text in zip(it.cycle((user, assistant)), reversed(history))
-        ])))
-        history.append(response)
+            role(text) for role, text in zip(it.cycle((user, assistant)), reversed(self.context))
+        ])) + task_reiteration, temperature=0.5)
+        self.context.append(response)
         return response
 
 ########################################################################################################
 
 
-    def gen_searcher_annotation(self, history):
+    def gen_searcher_annotation(self):
         response = gpt([
             system(
 f"""
@@ -242,24 +353,48 @@ Scenario: {self.dialogue}
 
 {self.py_preference_schema}
 
-Play the role of a chatbot analyst. Participate in the above dialogue scenario as the {self.searcher} until the user asks you to translate the dialogue text into python code. Then, translate what you said so far during the conversation as the {self.searcher} into a python object, using the above dataclass to define your preferences. Assign to fields to the Ellipses object `...` if they have not been shared. Code only.
+Participate in the above dialogue scenario as the {self.searcher} until the user asks you to translate the dialogue into python code. Then, use the above dataclass to translate the content of the dialogue into a python object. Do not make assumptions. Do not make up values. Do not infer values. If you have not shared or confirmed a particular field yet, set the field to None.
 """
             )
         ] + list(reversed([
-            role(text) for role, text in zip(it.cycle((assistant, user)), reversed(history))
+            role(text) for role, text in zip(it.cycle((assistant, user)), reversed(self.context))
         ])) + [
             user(
 f"""
-Translate what you said so far during the conversation as the {self.searcher} into a python object by instantiating the dataclass representing the search criteria and preferences you have shared so far (assign to fields to the Ellipses object `...` if they have not been shared ).
+{self.py_preference_schema}
+
+Translate what has been said during the conversation so far about your {self.item_type} preferences/selection into a python object by instantiating the above dataclass, like:
+
+```python
+shared_preferences = {self.obj_preference_schema.__name__}(
+    field_for_shared_preference=preference_value, # fill in preferences you have shared or confirmed with an appropriate value
+    field_for_preference_not_shared=None # set fields to None if you haven't shared or confirmed a preferred value, or if you are OK with any value   
+)
+```
+
+Remember to clear the appropriate fields if you have backed out of a selection or changed your mind.
+
+Code only.
 """
             )
-        ])
+        ], temperature=0.0, model='gpt-4o-mini')
+        search_annotation = None
+        old_namespace = dict(self.code_namespace)
+        for py_code_block in python_code_blocks_pattern.findall(response):
+            exec(py_code_block, self.code_namespace)
+        new_code_objects = {k: v for k, v in self.code_namespace.items()
+            if k not in old_namespace or old_namespace[k] is not v}
+        for new_code_object in new_code_objects.values():
+            if isinstance(new_code_object, self.obj_preference_schema):
+                search_annotation = new_code_object
+        self.py_search_annotations.append(response)
+        self.obj_search_annotations.append(search_annotation)
         return response
 
 ########################################################################################################
 
 
-    def gen_recommender_turn(self, history):
+    def gen_recommender_turn(self):
         response = gpt([
             system(
 f"""
@@ -267,937 +402,307 @@ Scenario: {self.dialogue}
 
 {self.py_database_schema}
 
-You are the {self.recommender} and the user is the {self.searcher}. Have a casual, everyday chat with the user in order to find a suitable {self.item_type} for the {self.searcher} out of the following items:
+You are the {self.recommender} and the user is the {self.searcher}. Have a casual, everyday chat with the user in order to help them find a suitable {self.item_type} for the {self.searcher} out of the following items:
 
-{self.py_database}
+{self.txt_database}
 
-Respond in one line only (one-line responses). Your responses should be extremely short and spoken out loud. Only share or request one or two pieces of information at a time. It is also OK to just acknowledge the user to allow them to express themselves.
+Do not lie to the {self.searcher} or misrepresent any of the information in the above list. Since the above list is all you have access to, ask the {self.searcher} for the specific characteristics they are looking for to narrow down the search as you chat. If the {self.searcher} has preferences that conflict with your recommendations, try to find an alternative {self.item_type} that meets their needs. Once the user confirms their choice, the conversation is over.
+
+Respond in one line only (one-line responses). Your responses should be extremely short and spoken out loud. Only share or ask one or two pieces of information at a time. It is also OK to just answer the {self.searcher}'s questions in order to allow them to talk more.
 """
             )
         ] + list(reversed([
-            role(text) for role, text in zip(it.cycle((user, assistant)), reversed(history))
+            role(text) for role, text in zip(it.cycle((user, assistant)), reversed(self.context))
+        ])), temperature=0.5)
+        self.context.append(response)
+        return response
+
+########################################################################################################
+
+
+    def gen_task_completion_status(self):
+        dialogue_text = '\n'.join(list(reversed([
+            f"{role}: {text}" for role, text in zip(it.cycle((self.recommender, self.searcher)), reversed(self.context))
         ])))
-        history.append(response)
-        return response
-
-########################################################################################################
-
-
-    def gen_recommender_annotation(self, history):
-        response = gpt([
-            system(
+        response = gpt(
+            [system(
 f"""
-Scenario: {self.dialogue}
-
-{self.py_database_schema}
-
-Play the role of a chatbot analyst. Participate in the above dialogue scenario as the {self.recommender} until the user asks you to translate the dialogue text into python code. Then, translate what you said so far during the conversation as the {self.recommender} into a list of {self.item_type} objects, where each object is an instance of the above dataclass. Only include items that you have shared with the {self.searcher} as potential options, so the list should be empty if you haven't shared any {self.item_type} options with the {self.searcher} yet. Do not include an assignment to fields that you have not shared or confirmed with the user. Code only.
+You are a helpful assistant.
 """
-            )
-        ] + list(reversed([
-            role(text) for role, text in zip(it.cycle((assistant, user)), reversed(history))
-        ])) + [
+            ),
             user(
 f"""
-Translate what you said so far during the conversation as the {self.recommender} into a python object by creating a list of {self.item_type} objects (the list should be empty if you haven't shared any {self.item_type} options with the {self.searcher} yet, only assign to fields whose values have been shared or confirmed with the user).
+# Dialogue
+{dialogue_text}
+
+{self.dialogue.rstrip('.')} (above). During the conversation, the {self.searcher} needs help searching for a {self.item_type}. Is the above Dialogue:
+
+(1) Complete: the {self.searcher} has made and confirmed their choice of {self.item_type} and they are about to say goodbye
+(2) Incomplete: the {self.searcher} still needs to confirm their final choice of {self.item_type}, or is still looking for more information
+(3) Failed: the {self.searcher} and {self.recommender} are saying goodbye to each other but no {self.item_type} was chosen by the {self.searcher}
+
+Please answer one of [ Complete/ Incomplete/ Failed]
 """
             )
-        ])
+        ], temperature=0.0)
+        self.txt_task_status.append(response)
+        status: T.Literal['incomplete', 'complete', 'failed'] = 'incomplete'
+        if response.startswith('Complete'):
+            status = 'complete'
+        elif response.startswith('Failed'):
+            status = 'failed'
+        self.category_task_status = status
         return response
+
+########################################################################################################
+########################################################################################################
+########################################################################################################
+
+
+
+
+
+
+list_item_pattern = re.compile(r"[0-9]+\. (.*)")
+
+@dc.dataclass
+class SearchDialogues:
+    rng_seed: int|None = None
+
+    def __post_init__(self):
+        self.txt_tasks_list = None
+        self.obj_tasks_list = []
+        self.py_tasks = {}
+        self.obj_tasks: dict[str, DialogueForMultipleSearches] = {}
+        self.rng = rng.Random(self.rng_seed)
+        self.code_namespace = dict(
+            dc=dc, SearchTopic=SearchTopic, DialogueForMultipleSearches=DialogueForMultipleSearches)
+
+    def interpret(self, code, temporary_namespace=True):
+        namespace = dict(self.code_namespace) if temporary_namespace else self.code_namespace
+        old_namespace = dict(namespace)
+        for py_code_block in python_code_blocks_pattern.findall(code):
+            exec(py_code_block, namespace)
+        new_code_objects = {k: v for k, v in namespace.items()
+            if k not in old_namespace or old_namespace[k] is not v}
+        return new_code_objects
 
 ########################################################################################################
 
 
+    def gen_search_dialogue_tasks(self, n=10):
+        self.txt_tasks_list = gpt([
+            system(
+f"""You are an intelligent, helpful, and creative assistant."""
+            ),
+            user(
+f"""
+Write a list of {n} unique dialogue scenarios that involve a sequence of 1-4 search/ selection based on preferences/ criteria.
+
+Each dialogue scenario should be summarized as a one-sentence description that names both speaker roles and identifies what is being searched for, like:
+
+1. A <speaker role 1> is getting help from a <speaker role 2> to look for a <search 1>, then a <search 2>, ...
+
+Make sure some scenarios have only 1 or 2 searches, and some have 4 searches.
+"""
+            )
+        ], temperature=1.0)
+        self.obj_tasks_list = [x.group(1) for x in list_item_pattern.finditer(self.txt_tasks_list)]
+        return self.txt_tasks_list
+
+
+########################################################################################################
+
+
+    def gen_search_dialogue_progression(self, task):
+        self.py_tasks[task] = gpt([
+            system_code_prompt,
+            user(
+f"""
+```python
+import dataclasses as dc
+
+{ins.getsource(SearchTopic)}
+
+{ins.getsource(DialogueForMultipleSearches)}
+```
+
+Using the above dataclasses, instantiate a DialogueForMultipleSearches object like `dialogue = DialogueForMultipleSearches(...` to represent the following dialogue scenario: 
+{task.replace(' then ', ' ').replace(' finally ', ' ').replace(' lastly ', ' ')}
+"""
+            )
+        ], temperature=0.8)
+        task_code = self.interpret(self.py_tasks[task])
+        for code_obj in task_code.values():
+            if isinstance(code_obj, DialogueForMultipleSearches):
+                self.obj_tasks[task] = code_obj
+        return self.py_tasks[task]
+
+########################################################################################################
+
+
+@dc.dataclass
+class SearchTopic:
+
+    searched_item_type_name: str
+    """A label for the type of thing the searcher is looking for"""
+
+    possible_criteria: dict[str, str]
+    """2-5 examples of criteria or preferences the searcher could have, represented as a mapping from criteria_type -> criteria_value"""
+
+@dc.dataclass
+class DialogueForMultipleSearches:
+
+    searcher: str
+    """A label for the role of the person who needs help searching for things"""
+
+    recommender: str
+    """A label for the role of the person with the knowledge and resources to help with the search and provide recommendations and results"""
+
+    scenario: str
+    """A description of the overall dialogue scenario using the searcher and recommender labels"""
+
+    topics: list[SearchTopic]
+    """Each thing being searched for, sorted by the order in which they will be searched"""
+
+
+
+def gen_search_tasks_main():
+    gen = SearchDialogues()
+    tasks_list = gen.gen_search_dialogue_tasks()
+    print(tasks_list)
+    for task in gen.obj_tasks_list:
+        py_task = gen.gen_search_dialogue_progression(task)
+        print(py_task)
+
+
+def gen_search_dial_main(
+    n_tasks = 5,
+    n_schemas_per_task = 2,
+    n_dials_per_schema = 2,
+):
+    dot_folder = Path('data/d0t')
+    iterations = [int(dot_iter.name.split('_')[1]) for dot_iter in dot_folder.iterdir()
+        if dot_iter.is_dir() and dot_iter.name.startswith('dot_')]
+    current_iteration = 1 if not iterations else max(iterations) + 1
+    dot_iter_folder = dot_folder/f"dot_{current_iteration}"
+    searchdials = SearchDialogues()
+    tasks_list = searchdials.gen_search_dialogue_tasks(n_tasks)
+    all_schema_counter = 0
+    for task_i, task in enumerate(searchdials.obj_tasks_list, 1):
+        for i_schema in range(n_schemas_per_task):
+            all_schema_counter += 1
+            try:
+                py_task = searchdials.gen_search_dialogue_progression(task)
+                print(py_task)
+                task_obj = searchdials.obj_tasks[task]
+                domains = '__'.join(x.searched_item_type_name.lower().replace(' ', '_')
+                    for x in task_obj.topics)
+                schema_folder = dot_iter_folder/f"{all_schema_counter:04d}__{domains}"
+                schema_folder.mkdir(parents=True, exist_ok=True)
+                subdials = []
+                for subtask in task_obj.topics:
+                    subdial = SearchDialogueGeneration(
+                        searcher=task_obj.searcher,
+                        recommender=task_obj.recommender,
+                        dialogue=f"A {task_obj.searcher} is getting help from a {task_obj.recommender} to find the right {subtask.searched_item_type_name}",
+                        item_type=subtask.searched_item_type_name,
+                        criteria=list(subtask.possible_criteria)
+                    )
+                    subdials.append(subdial)
+                for subdial in subdials:
+                    subdial.gen_preference_schema()
+                    subdial.gen_database_schema()
+                ez.File(schema_folder/'schema.json').save([
+                    dict(
+                        searcher=x.searcher, recommender=x.recommender,
+                        dialogue=x.dialogue, item_type=x.item_type,
+                        criteria=x.criteria,
+                        searcher_schema_code=x.py_preference_schema,
+                        recommender_schema_code=x.py_database_schema,
+                        searcher_schema={f.name: dict(type=str(f.type),
+                            desc=x.discovered_docstrings[id(f)])
+                            for f in dc.fields(x.obj_preference_schema)}, # noqa
+                        recommender_schema={f.name: dict(type=str(f.type),
+                            desc=x.discovered_docstrings[id(f)])
+                            for f in dc.fields(x.obj_database_schema)} # noqa
+                    )
+                    for x in subdials
+                ])
+                for i_dial in range(1, n_dials_per_schema+1):
+                    try:
+                        context = []
+                        failed = False
+                        output_dialogue = cp.deepcopy(subdials)
+                        for j, output_dialogue_part in enumerate(output_dialogue):
+                            if output_dialogue_part.rng_seed is None:
+                                output_dialogue_part.rng.seed(None)
+                            else:
+                                output_dialogue_part.rng.seed(
+                                    output_dialogue_part.rng_seed+i_dial+j)
+                        for stage, gen in enumerate(output_dialogue, 1):
+                            try:
+                                gen.context.extend(context)
+                                gen.gen_database_objects()
+                                gen.gen_database_red_herrings()
+                                gen.gen_preference_object()
+                                print('------------------------------------------------')
+                                for i in range(30):
+                                    searcher_response = gen.gen_searcher_turn(reiterate_task=(i==0 and stage > 1))
+                                    print(f"{gen.searcher+':':<15} {searcher_response}")
+                                    searcher_annotation = gen.gen_searcher_annotation()
+                                    print(
+                                        ez.ansi.foreground_gray,
+                                        '\t', ', '.join(f"{k}={v}" for k, v in vars(gen.obj_search_annotations[-1]).items()),
+                                        ez.ansi.reset,
+                                    )
+                                    recommender_response = gen.gen_recommender_turn()
+                                    print(f"{gen.recommender+':':<15} {recommender_response}")
+                                    done_with_segment = gen.gen_task_completion_status()
+                                    if gen.category_task_status == 'complete':
+                                        if stage < len(subdials):
+                                            pass
+                                            # gen.context.pop()
+                                            # gen.context.pop()
+                                        break
+                                    elif gen.category_task_status == 'failed':
+                                        failed = True
+                                        break
+                                if failed:
+                                    break
+                                context = gen.context
+                            except Exception:
+                                print(tb.format_exc(), file=sys.stderr)
+                                output_dialogue = output_dialogue[:stage-1]
+                                break
+                        if not output_dialogue: continue
+                        ez.File(schema_folder/f'dial_{i_dial:04d}.json').save([
+                            dict(
+                                domain=subdial.item_type,
+                                turns=list(reversed([
+                                    [searcher_turn, annotation, recommender_turn]
+                                    for searcher_turn, annotation, recommender_turn in zip(
+                                        reversed(subdial.context[::2]),
+                                        reversed(subdial.obj_search_annotations),
+                                        reversed(subdial.context[1::2])
+                                    )
+                                ])),
+                                preferences_code=subdial.py_preferences,
+                                red_herrings_code=subdial.py_red_herrings,
+                                database_code=subdial.py_database,
+                                database=subdial.obj_database,
+                                goal=subdial.obj_goal_item,
+                                status=subdial.category_task_status
+                            )
+                            for subdial in output_dialogue
+                        ])
+                    except Exception as e:
+                        print(tb.format_exc(), file=sys.stderr)
+                        continue
+            except Exception as e:
+                print(tb.format_exc(), file=sys.stderr)
+                continue
 
 if __name__ == '__main__':
+    gen_search_dial_main(n_tasks=100, n_schemas_per_task=1, n_dials_per_schema=5)
 
-    gens: list[SearchDomainSchemaGeneration] = [
-        SearchDomainSchemaGeneration(
-            searcher='Traveler',
-            recommender='Travel Agent',
-            dialogue='A Traveler is talking with a Travel Agent in order to book a vacation.',
-            item_type='Destination',
-            criteria=['possible attractions', 'climate', 'population density'],
-        ),
-        SearchDomainSchemaGeneration(
-            searcher='Traveler',
-            recommender='Travel Agent',
-            dialogue='A Traveler is talking with a Travel Agent in order to book a vacation.',
-            item_type='Hotel',
-            criteria=['available dates', 'price', 'amenities'],
-        ),
-        SearchDomainSchemaGeneration(
-            searcher='Reader',
-            recommender='Librarian',
-            dialogue='A Reader is talking with a Librarian in order to find books to read.',
-            item_type='Book',
-            criteria=['genre', 'length', 'author'],
-        ),
-        SearchDomainSchemaGeneration(
-            searcher='Forgetter',
-            recommender='Friend',
-            dialogue="A Friend is helping a Forgetter remember the right word for something.",
-            item_type='Word',
-            criteria=['length', 'fancy']
-        )
-    ]
-
-    for gen in gens:
-        gen.gen_preference_schema()
-        gen.gen_database_schema()
-        # gen.gen_schema_mapping()
-        gen.gen_database_objects()
-        gen.gen_preference_object()
-        chat = ['Hello! How can I help you today?']
-        print('------------------------------------------------')
-        for i in range(10):
-            searcher_response = gen.gen_searcher_turn(chat)
-            print(f"{gen.searcher:<20}:\t{searcher_response}")
-            searcher_annotation = gen.gen_searcher_annotation(chat)
-            print(ez.ansi.foreground_gray, tw.indent(searcher_annotation, '    '), ez.ansi.reset)
-            recommender_response = gen.gen_recommender_turn(chat)
-            print(f"{gen.recommender:<20}:\t{recommender_response}")
-            recommender_annotation = gen.gen_recommender_annotation(chat)
-            print(ez.ansi.foreground_gray, tw.indent(recommender_annotation, '    '), ez.ansi.reset)
-
-
-
-'''
-Traveler            :   Hi there! I'm looking to book a vacation. I have some specific preferences in mind.
-     ```python
-    travel_criteria = TravelCriteria(
-        attractions=..., 
-        climate=..., 
-        population_density=..., 
-        budget=..., 
-        travel_style=..., 
-        duration=...
-    )
-    ``` 
-Travel Agent        :   Great! What are your top preferences for this vacation?
-     ```python
-    destinations = []
-    ``` 
-Traveler            :   I'm really interested in shopping and a desert safari. I also prefer an arid climate.
-     ```python
-    travel_criteria = TravelCriteria(
-        attractions=['shopping', 'desert safari'],
-        climate='arid',
-        population_density=...,
-        budget=...,
-        travel_style=...,
-        duration=...
-    )
-    ``` 
-Travel Agent        :   Got it! How about a budget range for your trip?
-     ```python
-    destinations = []
-    ``` 
-Traveler            :   I'm looking at a budget of around $2500.
-     ```python
-    travel_criteria = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate="arid",
-        budget=2500,
-        population_density=...,
-        travel_style=...,
-        duration=...
-    )
-    ``` 
-Travel Agent        :   Perfect! Based on your preferences, Dubai would be a great fit. Would you like to know more about it?
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            budget=2500
-        )
-    ]
-    ``` 
-Traveler            :   Yes, that sounds amazing! What can you tell me about Dubai?
-     ```python
-    traveler_preferences = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate="arid",
-        population_density=...,
-        budget=2500,
-        travel_style=...,
-        duration=...
-    )
-    ``` 
-Travel Agent        :   Dubai offers shopping, desert safaris, stunning skyscrapers, and a luxurious experience, all within a budget of $2000 for about 5 days.
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            budget=2000,
-            duration=5,
-            travel_style="luxury"
-        )
-    ]
-    ``` 
-Traveler            :   That sounds fantastic! I love the idea of a luxurious experience. What about the population density there?
-     ```python
-    travel_criteria = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate="arid",
-        population_density=...,  # Not specified
-        budget=2500.0,
-        travel_style="luxury",  # Inferred from the context
-        duration=5
-    )
-    ``` 
-Travel Agent        :   Dubai has a high population density, which adds to its vibrant atmosphere and bustling city life.
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            budget=2500,
-            travel_style="luxury",
-            population_density="high",
-            duration=5
-        )
-    ]
-    ``` 
-Traveler            :   That sounds exciting! I enjoy a lively atmosphere. What about the accommodations?
-     ```python
-    traveler_preferences = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate='arid',
-        population_density='high',
-        budget=2500.0,
-        travel_style='luxury',
-        duration=5
-    )
-    ``` 
-Travel Agent        :   Dubai has a wide range of luxurious accommodations, from five-star hotels to unique desert resorts.
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            population_density="high",
-            budget=2000,
-            travel_style="luxury",
-            duration=5
-        )
-    ]
-    ``` 
-Traveler            :   That sounds perfect! I’d love to stay in a luxurious hotel. What activities can I do during my stay?
-     ```python
-    travel_criteria = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate="arid",
-        population_density="high",
-        budget=2500.0,
-        travel_style="luxury",
-        duration=5
-    )
-    ``` 
-Travel Agent        :   You can enjoy shopping at world-class malls, go on a desert safari, visit iconic landmarks like the Burj Khalifa, and relax at beautiful beaches!
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            population_density="high",
-            budget=2000,
-            travel_style="luxury",
-            duration=5
-        )
-    ]
-    ``` 
-Traveler            :   Wow, that sounds like a dream! I’m definitely interested in the desert safari and shopping. How do I go about booking this trip?
-     ```python
-    travel_criteria = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate="arid",
-        population_density="high",
-        budget=2500.0,
-        travel_style="luxury",
-        duration=5
-    )
-    ``` 
-Travel Agent        :   I can help you with that! Would you like assistance with flights, hotel bookings, or both?
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            population_density="high",
-            budget=2000,
-            travel_style="luxury",
-            duration=5
-        )
-    ]
-    ``` 
-Traveler            :   I’d like assistance with both, please!
-     ```python
-    traveler_preferences = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate="arid",
-        population_density="high",
-        budget=2500.0,
-        travel_style="luxury",
-        duration=5
-    )
-    ``` 
-Travel Agent        :   Great! I’ll need your travel dates and departure city to get started on the bookings.
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            population_density="high",
-            budget=2000,
-            travel_style="luxury",
-            duration=5
-        )
-    ]
-    ``` 
-Traveler            :   I’m looking to travel for 5 days, and I’m flexible with dates. I’ll be departing from New York.
-     ```python
-    traveler_preferences = TravelCriteria(
-        attractions=["shopping", "desert safari"],
-        climate="arid",
-        population_density="high",
-        budget=2500.0,
-        travel_style="luxury",
-        duration=5
-    )
-    ``` 
-Travel Agent        :   Perfect! I’ll check for the best flight options and hotel availability for your 5-day trip from New York to Dubai.
-     ```python
-    destinations = [
-        Destination(
-            name="Dubai",
-            attractions=["shopping", "desert safari"],
-            climate="arid",
-            population_density="high",
-            budget=2000,
-            travel_style="luxury",
-            duration=5
-        )
-    ]
-    ``` 
-------------------------------------------------
-Traveler            :   Hi there! I'm looking to book a hotel for a vacation.
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=..., 
-        min_rating=..., 
-        amenities=..., 
-        location=..., 
-        room_type=...
-    )
-    ``` 
-Travel Agent        :   That sounds great! Do you have a specific location in mind?
-     ```python
-    hotels = []
-    ``` 
-Traveler            :   Yes, I’d like to stay in Mountain View.
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=..., 
-        min_rating=..., 
-        amenities=..., 
-        location="Mountain View", 
-        room_type=...
-    )
-    ``` 
-Travel Agent        :   Got it! What’s your budget per night?
-     ```python
-    hotels = []
-    ``` 
-Traveler            :   I'm hoping to keep it under $200 per night.
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=200.0, 
-        min_rating=..., 
-        amenities=..., 
-        location="Mountain View", 
-        room_type=...
-    )
-    ``` 
-Travel Agent        :   Perfect! Any specific amenities you're looking for?
-     ```python
-    hotels = []
-    ``` 
-Traveler            :   Yes, I’d like to have wifi and parking available.
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=200.0, 
-        min_rating=..., 
-        amenities=['wifi', 'parking'], 
-        location='Mountain View', 
-        room_type=...
-    )
-    ``` 
-Travel Agent        :   Great choice! Let me find some options for you. One moment!
-     ```python
-    hotels = []
-    ``` 
-Traveler            :   Sure, take your time!
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=200.0, 
-        min_rating=..., 
-        amenities=['wifi', 'parking'], 
-        location='Mountain View', 
-        room_type=...
-    )
-    ``` 
-Travel Agent        :   I found a couple of options: the Mountain Lodge and the Business Hotel. Would you like to know more about either?
-     ```python
-    hotels = []
-    ``` 
-Traveler            :   Yes, I’d love to hear more about the Mountain Lodge!
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=200.0, 
-        min_rating=..., 
-        amenities=['wifi', 'parking'], 
-        location='Mountain View', 
-        room_type=...
-    )
-    ``` 
-Travel Agent        :   The Mountain Lodge is $150 per night, has a 4-star rating, and offers wifi and parking. Sounds good?
-     ```python
-    hotels = [
-        Hotel(
-            name="Mountain Lodge",
-            price_per_night=150,
-            rating=4,
-            amenities=['wifi', 'parking'],
-            location="Mountain View"
-        )
-    ]
-    ``` 
-Traveler            :   That sounds perfect! What about the room type? Do they have double rooms available?
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=200.0, 
-        min_rating=4.0, 
-        amenities=['wifi', 'parking'], 
-        location='Mountain View', 
-        room_type='double'
-    )
-    ``` 
-Travel Agent        :   Yes, they have double rooms available at the Mountain Lodge! Would you like to book it?
-     ```python
-    hotels = [
-        Hotel(
-            name="Mountain Lodge",
-            price_per_night=150,
-            rating=4.0,
-            amenities=['wifi', 'parking'],
-            location="Mountain View",
-            room_type='double'
-        )
-    ]
-    ``` 
-Traveler            :   Yes, let's go ahead and book it!
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date=..., 
-        check_out_date=..., 
-        max_price=200.0, 
-        min_rating=4.0, 
-        amenities=['wifi', 'parking'], 
-        location='Mountain View', 
-        room_type='double'
-    )
-    ``` 
-Travel Agent        :   Awesome! Can I get your check-in and check-out dates, please?
-     ```python
-    hotels = [
-        Hotel(
-            name="Mountain Lodge",
-            price_per_night=150,
-            rating=4.0,
-            amenities=['wifi', 'parking'],
-            location="Mountain View",
-            room_type='double'
-        )
-    ]
-    ``` 
-Traveler            :   Sure! Check-in is on December 1st and check-out is on December 7th.
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date="2023-12-01",
-        check_out_date="2023-12-07",
-        max_price=200.0,
-        min_rating=4.0,
-        amenities=['wifi', 'parking'],
-        location="Mountain View",
-        room_type='double'
-    )
-    ``` 
-Travel Agent        :   Great! I’ll finalize the booking for those dates. Just a moment!
-     ```python
-    hotels = [
-        Hotel(
-            name="Mountain Lodge",
-            price_per_night=150,
-            rating=4.0,
-            amenities=['wifi', 'parking'],
-            location="Mountain View",
-            room_type='double'
-        )
-    ]
-    ``` 
-Traveler            :   Thank you! I appreciate it.
-     ```python
-    hotel_search_criteria = HotelSearchCriteria(
-        check_in_date="2023-12-01",
-        check_out_date="2023-12-07",
-        max_price=200.0,
-        min_rating=4.0,
-        amenities=['wifi', 'parking'],
-        location="Mountain View",
-        room_type='double'
-    )
-    ``` 
-Travel Agent        :   You're all set! Enjoy your stay at the Mountain Lodge!
-     ```python
-    hotels = [
-        Hotel(
-            name="Mountain Lodge",
-            price_per_night=150,
-            rating=4.0,
-            amenities=['wifi', 'parking'],
-            location="Mountain View",
-            room_type='double'
-        )
-    ]
-    ``` 
-------------------------------------------------
-Reader              :   Hi there! I'm looking for a book to read. I'm interested in non-fiction, preferably something long. Do you have any recommendations?
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author=...,
-        publication_year=...,
-        rating=...,
-        language=...
-    )
-    ``` 
-Librarian           :   Sure! How about "A Brief History of Time" by Stephen Hawking?
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking"
-        )
-    ]
-    ``` 
-Reader              :   That sounds great! I was actually hoping to find something by Stephen Hawking. Is that book from around 1988?
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=...,
-        language=...
-    )
-    ``` 
-Librarian           :   Yes, that's correct! It was published in 1988.
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988
-        )
-    ]
-    ``` 
-Reader              :   Perfect! I've heard good things about it. What about the rating? Do you know if it has a rating of around 4.0 or higher?
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.0,
-        language=...
-    )
-    ``` 
-Librarian           :   Yes, it has a rating of 4.5!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-Reader              :   Awesome! That definitely meets my criteria. I’d love to check it out. Thanks for your help!
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.5,
-        language=...
-    )
-    ``` 
-Librarian           :   You're welcome! Enjoy your reading!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-Reader              :   Thank you! I really appreciate it!
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.5,
-        language=...
-    )
-    ``` 
-Librarian           :   Anytime! Happy reading!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-Reader              :   Thanks! You too!
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.5,
-        language=...
-    )
-    ``` 
-Librarian           :   Thank you! Take care!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-Reader              :   You too! Bye!
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.5,
-        language=...
-    )
-    ``` 
-Librarian           :   Bye! Have a great day!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-Reader              :   You too! Have a wonderful day!
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.5,
-        language=...
-    )
-    ``` 
-Librarian           :   Thanks! You as well!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-Reader              :   Thank you! Talk to you later!
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.5,
-        language=...
-    )
-    ``` 
-Librarian           :   Talk to you later!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-Reader              :   Looking forward to it! Bye!
-     ```python
-    book_search_criteria = BookSearchCriteria(
-        genre='Non-Fiction',
-        length='Long',
-        author='Stephen Hawking',
-        publication_year=1988,
-        rating=4.5,
-        language=...
-    )
-    ``` 
-Librarian           :   Bye!
-     ```python
-    books = [
-        Book(
-            title="A Brief History of Time",
-            genre="Non-Fiction",
-            length="Long",
-            author="Stephen Hawking",
-            publication_year=1988,
-            rating=4.5
-        )
-    ]
-    ``` 
-------------------------------------------------
-Forgetter           :   Hey there! I'm trying to remember a word, but I can't quite get it. It's an adjective, and I think it starts with an 'e' and ends with an 'e'.
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=None,
-        fancy=None,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   Got it! Is it a fancy word or more common?
-     ```python
-    words = [
-        Word(part_of_speech='adjective', starts_with='e', ends_with='e')
-    ]
-    ``` 
-Forgetter           :   I believe it should be a fancy word. Do you have any ideas?
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=None,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   Yes! How about "exquisite"? Does that sound right?
-     ```python
-    words = [
-        Word(text="exquisite", length=8, fancy=True, part_of_speech='adjective', starts_with='e', ends_with='e')
-    ]
-    ``` 
-Forgetter           :   That's a great suggestion! But "exquisite" is actually 10 letters long. I'm looking for something that's 9 letters. Any other thoughts?
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   How about "elegant"? It’s 8 letters and fits your criteria. What do you think?
-     ```python
-    words = [
-        Word(text="elegant", length=8, fancy=True, part_of_speech='adjective', starts_with='e', ends_with='t')
-    ]
-    ``` 
-Forgetter           :   "Elegant" is a lovely word, but it's 8 letters, and I'm looking for something that's 9 letters long. Any other ideas?
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   Hmm, let me think... How about "exquisite"? It’s actually 9 letters long and fits your criteria!
-     ```python
-    words = [
-        Word(text="exquisite", length=9, fancy=True, part_of_speech='adjective', starts_with='e', ends_with='e'),
-    ]
-    ``` 
-Forgetter           :   "Exquisite" is indeed 9 letters long, but it doesn't quite fit since it's not an adjective that starts with 'e' and ends with 'e'. Keep thinking!
-     ```python
-    forgetter_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   Got it! The word "elegance" is 9 letters long, but it’s a noun. Let me check again for an adjective.
-     ```python
-    words = [
-        Word(text="exquisite", length=9, fancy=True, part_of_speech='adjective', starts_with='e', ends_with='e'),
-    ]
-    ``` 
-Forgetter           :   Thanks for checking! I appreciate it. I'm really looking for a fancy adjective that starts with 'e' and ends with 'e'. Any luck?
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   Yes! The word "elegant" is a fancy adjective, but it’s 8 letters. Let me see if there's another option.
-     ```python
-    words = [
-        Word(text="elegant", length=8, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="t"),
-        Word(text="exquisite", length=9, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="e")
-    ]
-    ``` 
-Forgetter           :   I appreciate your help! I'm hoping to find that perfect 9-letter fancy adjective. Let me know if anything comes to mind!
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   I’m still thinking! The word "exquisite" fits, but it’s not the right part of speech. Let me keep searching!
-     ```python
-    words = [
-        Word(text="exquisite", length=9, fancy=True, part_of_speech='adjective', starts_with='e', ends_with='e'),
-        Word(text="elegant", length=8, fancy=True, part_of_speech='adjective', starts_with='e', ends_with='t')
-    ]
-    ``` 
-Forgetter           :   No problem! I know it can be tricky. Just let me know if you think of anything else!
-     ```python
-    forgetter_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   Thanks for your patience! I’ll keep looking for that perfect word!
-     ```python
-    words = [
-        Word(text="elegant", length=8, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="t"),
-        Word(text="exquisite", length=9, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="e")
-    ]
-    ``` 
-Forgetter           :   Of course! I really appreciate your help. I'm sure we'll find it together!
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   Absolutely! We’ll find it together! Just let me know if you remember anything else!
-     ```python
-    words = [
-        Word(text="exquisite", length=9, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="e"),
-        Word(text="elegant", length=8, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="t"),
-    ]
-    ``` 
-Forgetter           :   Will do! Thanks again for your support. I'm feeling hopeful!
-     ```python
-    word_search_criteria = WordSearchCriteria(
-        length=9,
-        fancy=True,
-        part_of_speech='adjective',
-        starts_with='e',
-        ends_with='e'
-    )
-    ``` 
-Friend              :   You're welcome! I'm glad to hear that! Let's keep the search going!
-     ```python
-    words = [
-        Word(text="exquisite", length=9, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="e"),
-        Word(text="elegant", length=8, fancy=True, part_of_speech="adjective", starts_with="e", ends_with="t"),
-    ]
-    ``` 
-
-
-'''
