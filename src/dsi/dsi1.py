@@ -64,7 +64,7 @@ class DsiExperiment:
     def __post_init__(self):
         self.rng = rng.Random(self.rng_seed)
         os.environ['HF_HOME'] = str(pl.Path(self.root_path)/'.cache')
-        self.tokenizer: hf.LlamaTokenizer = None
+        self.tokenizer: hf.LlamaTokenizer = None # noqa
 
     def run(self):
         spt.setproctitle(self.experiment_name)
@@ -271,7 +271,7 @@ class DsiExperiment:
                 frames = turn_json['frames']
                 for frame in frames:
                     domain = frame['service']
-                    state_json = frame['state']
+                    state_json = frame['states']
                     for slot_name, slot_values in state_json['slot_values'].items():
                         slot_value = slot_values[0]
                         new_previous_state[domain, slot_name] = slot_value

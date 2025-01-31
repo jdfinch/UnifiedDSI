@@ -18,7 +18,7 @@ def format_dialogue(turns: list[str]):
     context = [f"{s}: {t}" for s, t in reversed(tuple(zip("ABA", reversed(turns))))]
     return '\n'.join(['**', *context, '->'])
 
-# Function to infer state in batches
+# Function to infer states in batches
 def infer_state_batch(turns_list: list[list[str]]):
     inputs = [format_dialogue(turns) for turns in turns_list]
     tokenized_inputs = tokenizer(inputs, return_tensors='pt', padding=True).to(device)
