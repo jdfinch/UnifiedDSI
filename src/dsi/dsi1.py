@@ -56,7 +56,7 @@ class DsiExperiment:
     root_path: str = '/local/scratch/jdfinch'
     project_path: str = '/local/scratch/jdfinch/2025/UnifiedDSI'
     num_mwoz_valid_dials: int = 5
-    steps_to_validate_on: tuple[int] = (100, 200, 300)
+    steps_to_validate_on: tuple[int, ...] = (100, 200, 300)
     device: str|int = 'cuda'
     rng_seed: int = 42
     git_commit_id: str = None
@@ -553,7 +553,7 @@ class DsiExperiment:
                 schema=schema, dialogue=dialogue, slot_values=slot_values.slot_values, discovered_slot_values=None)
             dsi_prompt_tokens = self.tokenizer.encode(dsi_prompt.text, add_special_tokens=False)
             dsi_prompt_tokens = pt.tensor([dsi_prompt_tokens], dtype=pt.long, device=device)
-            attention_mask = pt.ones_like(dsi_prompt_tokens, dtype=pt.long)
+            attention_mask = pt.ones_like(dsi_prompt_tokens, dtype=pt.long, device=device)
             all_tokens, = self.model.generate(
                 inputs=dsi_prompt_tokens, attention_mask=attention_mask, generation_config=generation_config)
             generated_tokens = all_tokens[len(dsi_prompt_tokens[0]):]
@@ -628,7 +628,7 @@ if __name__ == '__main__':
         sgd_train_downsample_dialogues=3000,
         train_on_dot_stage_1=False,
         num_mwoz_valid_dials=30,
-        max_seq_len=2048,
+        max_seq_len=1024,
         physical_batch_size=4,
         device='cuda:6',
         new_lora_rank=1,
