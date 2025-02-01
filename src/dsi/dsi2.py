@@ -34,7 +34,7 @@ class DsiExperiment:
 
     train_data_path: str = 'data/d0t/dot_2'
 
-    eval_data_path: str = 'data/multiwoz24/original/dev_dials.json'
+    eval_data_path: str = 'data/multiwoz24/dev_dials.json'
     downsample_eval_dialogues: int|None = 5
     steps_to_validate_on: tuple[int, ...] = (100, 200, 300)
 
@@ -122,6 +122,12 @@ class DsiExperiment:
     def training(self, data: dial.Dialogues):
         self.model.train()
         tokens: list[list[tuple[str, int, int]]] = self.tokenize_training_data(data)
+        def display_some_training(seqs: list[list[tuple[str, int, int]]]):
+            seqs = rng.sample(seqs, 5)
+            for seq in seqs:
+                print(''.join(f"{ez.ansi.foreground_blue}{t}{ez.ansi.reset}" if l == -100 else t for t, _, l in seq))
+                print('\n\n')
+        display_some_training(tokens)
         tokens_within_maxlen = [x for x in tokens if len(x) < self.max_seq_len]
         if len(tokens_within_maxlen) < len(tokens):
             print(f"Filtered out {len(tokens) - len(tokens_within_maxlen)}/{len(tokens)} sequences over max_seq_len {self.max_seq_len}")
@@ -287,7 +293,7 @@ class DialogueTurn(seq.Sequence):
     text: str
 @dc.dataclass
 class NewSchemaSlot(seq.Sequence):
-    format = "\n* {value}: {description} ({domain}, {name})"
+    format = "\n* {domain}, {name}: {description} = {value}"
     domain: str
     name: str
     value: str
@@ -295,27 +301,27 @@ class NewSchemaSlot(seq.Sequence):
     @classmethod
     def parse_from(cls, seq):
         try:
-            seq = seq.strip().lstrip('* ').rstrip(' )')
-            value, seq = seq.split(': ', 1)
-            desc, seq = seq.split('(', 1)
-            domain, name = seq[:-1].split(', ', 1)
+            seq = seq.strip().lstrip('* ').rstrip()
+            domain, seq = seq.split(', ', 1)
+            name, seq = seq.split(': ', 1)
+            desc, value = seq.split(' = ', 1)
             return NewSchemaSlot(domain.strip(), name.strip(), value.strip(), desc.strip())
         except Exception:
             return None
 @dc.dataclass
 class OldSchemaSlot(seq.Sequence):
-    format = "\n* {description} ({domain}, {name})"
+    format = "\n* {domain}, {name}: {description}"
     domain: str
     name: str
     description: str
 @dc.dataclass
 class DsiPrompt(seq.Sequence):
-    format = "# Dialogue\n\n{dialogue}\n\n{instruction}"
+    format = "# Dialogue{dialogue}\n\n{instruction}"
     dialogue: list[DialogueTurn]
     instruction: str
 @dc.dataclass
 class DsiDiscoveries(seq.Sequence):
-    format = "{old_slots}{new_slots}{eos}"
+    format = "# Old Key Information Types{old_slots}\n\n# New Key Information Types and Values{new_slots}{eos}"
     old_slots: list[OldSchemaSlot]
     new_slots: list[NewSchemaSlot]
     eos: str = '\n* <|eot_id|>'
@@ -324,8 +330,11 @@ def create_dsi_sequence(
     dialogue: list[DialogueTurn],
     old_schema: list[OldSchemaSlot],
     new_schema: list[NewSchemaSlot] = None,
-    system_instruction: str = "You are an intelligent and knowldgeable assistant.",
-    user_instruction: str = "Identify key information from the Dialogue that the Agent needs to know to help the User with their request. Use the format:\n* <value>: <description> (<topic>, <info type>)"
+    system_instruction: str = "You are an intelligent and knowledgeable assistant.",
+    user_instruction: str = '\n'.join((
+        "Identify key information from the Dialogue that the Agent needs to know to help the User with their request. Use the format:",
+        "* {searched type name}, {info type name}: {info type description} = {info value}"
+    ))
 ):
     if new_schema:
         return seq.Llama3Sequence([
@@ -381,7 +390,7 @@ if __name__ == '__main__':
 
     ####### FOR DEBUG  :D ######################################################################
 
-    machine = 'local'
+    machine = 'tebuna'
     projdict = {}
     if machine == 'local':
         projdict = dict(
@@ -395,20 +404,21 @@ if __name__ == '__main__':
     experiment = DsiExperiment(
         # model_to_load='ex/trial/150',
         **projdict,
-        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
         quantization='nf4dq',
         max_seq_len=2048,
-        physical_batch_size=1,
-        device='cuda',
+        physical_batch_size=4,
+        device='cuda:6',
         new_lora_rank=1,
-        epochs=1,
+        epochs=100,
         batch_size=4,
-        steps_to_validate_on=(3, 25, 50, 75, 100, 150, 200, 250)
-            + tuple(range(300, 1000, 100)) + tuple(range(1000, 3000, 300)),
+        steps_to_validate_on=(25, 50, 75, 100, 150, 200, 250)
+            + tuple(range(300, 1000, 100)) + tuple(range(1000, 300000, 300)),
         warmup=100,
-        learning_rate=1e-4,
+        learning_rate=1e-3,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
     )
 
-    experiment.run()
+    launch(experiment)
+    # experiment.run()
