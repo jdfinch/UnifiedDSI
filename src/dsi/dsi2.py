@@ -1,7 +1,22 @@
+import pathlib as pl
+import os
+
+machine = 'tebuna'
+projdict = {}
+if machine == 'local':
+    projdict = dict(
+        root_path='~',
+        project_path='~/PycharmProjects/UnifiedDSI')
+elif machine == 'tebuna':
+    projdict = dict(
+        root_path='/local/scratch/jdfinch',
+        project_path='/local/scratch/jdfinch/2025/UnifiedDSI')
+    os.environ['HF_HOME'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
+    os.environ['HF_HUB_CACHE'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
+
 
 import transformers as hf
 import dataclasses as dc
-import pathlib as pl
 import functools as ft
 import json
 import csv
@@ -21,6 +36,7 @@ import datetime as dt
 import itertools as it
 import peft
 import utils
+import copy as cp
 import typing as T
 
 
@@ -38,9 +54,12 @@ class DsiExperiment:
     downsample_eval_dialogues: int|None = 5
     steps_to_validate_on: tuple[int, ...] = (100, 200, 300)
 
-    seq_module: str = 'seq1'
+    train_num_turn_level_seqs_per_dialogue: int = 2
+    """Default of 2.0 corresponds to 200% """
     train_percent_full_schema: float = 0.25
     train_percent_empty_schema: float = 0.25
+    train_percent_foregin_schema: float = 0.5
+    train_max_imported_schemata: int = 5
 
     speaker_map: dict[str, str] = dc.field(default_factory=lambda: {
         'user': 'User', 'system': 'Agent', 'bot': 'Agent'})
@@ -61,6 +80,7 @@ class DsiExperiment:
     optimizer_quantization: str|None = '8bit'
     warmup: int = 10
     max_seq_len: int = 2048
+    max_new_tokens: int = 2048
     decoding_beams: int = 1
     decoding_repetition_penalty: float = 1.2
     decoding_length_penalty: float = 0.0
@@ -75,7 +95,6 @@ class DsiExperiment:
 
     def __post_init__(self):
         self.rng = rng.Random(self.rng_seed)
-        os.environ['HF_HOME'] = str(pl.Path(self.root_path).expanduser()/'.cache')
         self.tokenizer: hf.LlamaTokenizer = ...
 
     def run(self):
@@ -84,6 +103,10 @@ class DsiExperiment:
         self.datetime = dt.datetime.now().isoformat()
         self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
         self.load_model()
+        print(self.tokenizer.decode(self.model.generate(self.tokenizer.encode(seq.Llama3Sequence([
+            seq.System('You are a helpful assistant.'),
+            seq.User('Give me the MultiWOZ slot schema.')
+        ]).text, return_tensors='pt').to(self.device), max_new_tokens=512, do_sample=False)[0])); exit()
         if 'd0t' in self.train_data_path:
             training_data: dial.Dialogues = dial.dot2_to_dialogues(self.train_data_path)
         elif 'sgd' in self.train_data_path:
@@ -95,20 +118,24 @@ class DsiExperiment:
         training_data.downsample(min(30, len(training_data))).save(experiment_path/'train_dials.json')
         if 'woz' in self.eval_data_path:
             evaluation_data: dial.Dialogues = dial.multiwoz_to_dialogues(self.eval_data_path)
+
         else:
             raise NotImplementedError
         if self.downsample_eval_dialogues:
             evaluation_data = evaluation_data.downsample(self.downsample_eval_dialogues)
+        gold_data = cp.deepcopy(evaluation_data)
+        evaluation_data.clear_schema_and_state_labels()
         if self.current_step == 0 and 0 in self.steps_to_validate_on:
-            self.validate(evaluation_data)
+            self.validate(evaluation_data, gold_data)
         for self.current_epoch, steps in enumerate(self.training(training_data), 1):
             for step_in_epoch, nll in enumerate(steps, 1):
                 self.current_step += 1
                 if self.current_step in self.steps_to_validate_on:
-                    self.validate(evaluation_data)
-        self.validate(evaluation_data)
+                    self.validate(evaluation_data, gold_data)
+        self.validate(evaluation_data, gold_data)
 
-    def validate(self, data: dial.Dialogues):
+    def validate(self, data: dial.Dialogues, gold: dial.Dialogues):
+        print(f"Max VRAM: {pt.cuda.max_memory_allocated(self.device)/1e9:.3f}")
         experiment_step_path = pl.Path(self.project_path).expanduser()/'ex'/self.experiment_name/str(self.current_step)
         self.model.save_pretrained(experiment_step_path)
         (experiment_step_path/'experiment.json').write_text(json.dumps(
@@ -121,9 +148,9 @@ class DsiExperiment:
 
     def training(self, data: dial.Dialogues):
         self.model.train()
-        tokens: list[list[tuple[str, int, int]]] = self.tokenize_training_data(data)
+        tokens: list[list[tuple[str, int, int]]] = self.preprocess_training_for_dialogue_level_dsi(data)
         def display_some_training(seqs: list[list[tuple[str, int, int]]]):
-            seqs = rng.sample(seqs, 5)
+            seqs = rng.sample(seqs, min(100, len(seqs)))
             for seq in seqs:
                 print(''.join(f"{ez.ansi.foreground_blue}{t}{ez.ansi.reset}" if l == -100 else t for t, _, l in seq))
                 print('\n\n')
@@ -186,7 +213,7 @@ class DsiExperiment:
             do_sample=False,
             repetition_penalty=self.decoding_repetition_penalty,
             **(dict(length_penalty=self.decoding_length_penalty) if self.decoding_beams > 1 else {}),
-            max_new_tokens=256,
+            max_new_tokens=self.max_new_tokens,
             eos_token_id=self.tokenizer.eos_token_id,
             pad_token_id=0)
         device = 'cuda' if self.device == 'auto' else self.device
@@ -204,7 +231,7 @@ class DsiExperiment:
         tokens = seq.tokenize(prompts, self.tokenizer)
         inputs_tokens = [[t[1] for t in x] for x in tokens]
         attention_masks = [[1]*len(x) for x in inputs_tokens]
-        for input_tokens, attention_mask in tqdm(list(zip(inputs_tokens, attention_masks)), "generate"):
+        for prompt, input_tokens, attention_mask in tqdm(list(zip(prompts, inputs_tokens, attention_masks)), "generate"):
             input_tokens = pt.tensor([input_tokens], dtype=pt.long, device=device)
             attention_mask = pt.tensor([attention_mask], dtype=pt.long, device=device)
             out_tokens, = self.model.generate(
@@ -212,7 +239,7 @@ class DsiExperiment:
             gen_tokens = out_tokens[len(input_tokens[0]):]
             generated = self.tokenizer.decode(gen_tokens, skip_special_tokens=True)
             predictions.append(generated)
-            print(generated, '\n')
+            print(ez.ansi.foreground_blue, prompt.text, ez.ansi.reset, generated, '\n', sep='')
         return predictions
 
     def load_model(self):
@@ -241,50 +268,67 @@ class DsiExperiment:
         if self.tokenizer is None:
             self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
 
-    def tokenize_training_data(self, data: dial.Dialogues):
+    def preprocess_training_for_dialogue_level_dsi(self, data: dial.Dialogues):
         sequences = []
-        total_num_domain_schemas = sum(1 for dialogue in data for domain in dialogue.discoveries_by_domain())
-        flags_full_schema = ['f'] * int(self.train_percent_full_schema * total_num_domain_schemas)
-        flags_empty_schema = ['e'] * int(self.train_percent_empty_schema * total_num_domain_schemas)
-        flags = flags_full_schema + flags_empty_schema + ['p'] * (
-            total_num_domain_schemas - len(flags_full_schema) - len(flags_empty_schema))
-        self.rng.shuffle(flags)
+        all_schemas = {}
         for dialogue in data:
+            all_schemas.update(dialogue.domains())
+        all_schemas = list(all_schemas.items())
+        for dialogue in data:
+            domains = dialogue.domains()
+            if self.rng.random() < self.train_percent_foregin_schema:
+                n_imported_schemas = self.rng.randint(1, self.train_max_imported_schemata)
+                for i in range(n_imported_schemas):
+                    while (choice:=self.rng.choice(all_schemas))[0] in domains: continue
+                    imported_domain, imported_schema = choice
+                    domains[imported_domain] = imported_schema
             old_schemas = []
             new_schema = []
-            for domain, schema in dialogue.discoveries_by_domain().items():
-                domain_old_schema = []
-                flag = flags.pop()
-                if flag == 'f':
-                    for slot, (desc,_) in schema.items():
-                        domain_old_schema.append(OldSchemaSlot(domain, slot, desc))
-                elif flag == 'e':
-                    for slot, (desc,_) in schema.items():
-                        value = dialogue.states[-1][domain, slot]
-                        new_schema.append(NewSchemaSlot(domain, slot, value, desc))
+            for domain, schema in domains.items():
+                domain_old_schema = [
+                    NewSchemaSlot(domain, slot, dialogue.states[-1].get((domain, slot)), desc) 
+                    for slot, (desc, _) in schema.items()]
+                if (r:=self.rng.random()) < self.train_percent_empty_schema:
+                    domain_old_schema = []
+                elif r < self.train_percent_empty_schema + self.train_percent_full_schema:
+                    pass
                 else:
-                    slots = list(schema)
-                    preexisting_slots = set(self.rng.sample(slots, self.rng.randint(1, len(slots)-1)))
-                    for slot, (desc,_) in schema.items():
-                        value = dialogue.states[-1][domain, slot]
-                        if slot in preexisting_slots:
-                            domain_old_schema.append(OldSchemaSlot(domain, slot, desc))
-                        else:
-                            new_schema.append(NewSchemaSlot(domain, slot, value, desc))
+                    domain_old_schema = self.rng.sample(
+                        domain_old_schema, self.rng.randint(1, len(domain_old_schema)))
                 old_schemas.append(domain_old_schema)
             self.rng.shuffle(old_schemas)
             for old_schema in old_schemas:
                 self.rng.shuffle(old_schema)
             old_schema = [x for old_schema in old_schemas for x in old_schema]
+            old_domain_slots = {(x.domain, x.name) for x in old_schema}
+            for (domain, slot), (desc, _) in dialogue.discoveries().items():
+                if (domain, slot) in old_domain_slots: continue
+                value = dialogue.states[-1].get((domain, slot))
+                new_schema.append(NewSchemaSlot(domain, slot, value, desc))
             sequence = create_dsi_sequence(
                 dialogue=[DialogueTurn(speaker, text) for speaker, text
                     in zip(it.cycle(('User', 'Agent')), dialogue.turns)],
-                old_schema=old_schema,
-                new_schema=new_schema)
+                old_schema=[OldSchemaSlot(x.domain, x.name, x.description) for x in old_schema],
+                new_schema=old_schema+new_schema)
             sequences.append(sequence)
         tokens_ids_labels_list = seq.tokenize(sequences, self.tokenizer,
             label_span_types=[('DsiDiscoveries', 'new_slots'), ('DsiDiscoveries', 'eos')])
         return tokens_ids_labels_list
+    
+    def preprocess_training_for_turn_level_dsi(self, data: dial.Dialogues):
+        all_data = dial.Dialogues(data)
+        for dialogue in data:
+            if not dialogue.states: continue
+            cuts = self.rng.sample(
+                list(range(1, len(dialogue.states)-1)), 
+                min(self.train_num_turn_level_seqs_per_dialogue, len(dialogue.states)))
+            for cut in cuts:
+                cut_dialogue = cp.copy(dialogue)
+                cut_dialogue.states = cut_dialogue.states[:cut]
+                cut_dialogue.turns = cut_dialogue.turns[:cut*2]
+                all_data.append(cut_dialogue)
+        return self.preprocess_training_for_dialogue_level_dsi(all_data)
+
 
 @dc.dataclass
 class DialogueTurn(seq.Sequence):
@@ -316,13 +360,13 @@ class OldSchemaSlot(seq.Sequence):
     description: str
 @dc.dataclass
 class DsiPrompt(seq.Sequence):
-    format = "# Dialogue{dialogue}\n\n{instruction}"
+    format = "# Dialogue{dialogue}\n\n# Key Information Types{old_slots}\n\n{instruction}"
     dialogue: list[DialogueTurn]
+    old_slots: list[OldSchemaSlot]
     instruction: str
 @dc.dataclass
 class DsiDiscoveries(seq.Sequence):
-    format = "# Old Key Information Types{old_slots}\n\n# New Key Information Types and Values{new_slots}{eos}"
-    old_slots: list[OldSchemaSlot]
+    format = "# Key Information Values{new_slots}{eos}"
     new_slots: list[NewSchemaSlot]
     eos: str = '\n* <|eot_id|>'
 
@@ -336,18 +380,20 @@ def create_dsi_sequence(
         "* {searched type name}, {info type name}: {info type description} = {info value}"
     ))
 ):
-    if new_schema:
+    if new_schema is not None:
         return seq.Llama3Sequence([
             seq.System(system_instruction),
-            seq.User(DsiPrompt(dialogue, user_instruction)),
-            seq.AssistantResponse(DsiDiscoveries(old_schema, new_schema))
+            seq.User(DsiPrompt(dialogue, old_schema, user_instruction)),
+            seq.AssistantResponse(DsiDiscoveries(new_schema))
         ])
     else:
         return seq.Llama3Sequence([
             seq.System(system_instruction),
-            seq.User(DsiPrompt(dialogue, user_instruction)),
-            seq.AssistantResponse(DsiDiscoveries(old_schema, [], eos=''))
+            seq.User(DsiPrompt(dialogue, old_schema, user_instruction)),
+            seq.AssistantResponse(DsiDiscoveries([], eos=''))
         ])
+
+
 
 
 import socket as sk
@@ -390,35 +436,25 @@ if __name__ == '__main__':
 
     ####### FOR DEBUG  :D ######################################################################
 
-    machine = 'tebuna'
-    projdict = {}
-    if machine == 'local':
-        projdict = dict(
-            root_path='~',
-            project_path='~/PycharmProjects/UnifiedDSI')
-    elif machine == 'tebuna':
-        projdict = dict(
-            root_path='/local/scratch/jdfinch',
-            project_path='/local/scratch/jdfinch/2025/UnifiedDSI')
-
     experiment = DsiExperiment(
-        # model_to_load='ex/trial/150',
         **projdict,
-        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
+        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        model_to_load='meta-llama/Llama-3.2-1B-Instruct',
         quantization='nf4dq',
-        max_seq_len=2048,
-        physical_batch_size=4,
+        max_seq_len=4096,
+        max_new_tokens=2048,
+        physical_batch_size=1,
         device='cuda:6',
         new_lora_rank=1,
         epochs=100,
-        batch_size=4,
+        batch_size=1,
         steps_to_validate_on=(25, 50, 75, 100, 150, 200, 250)
             + tuple(range(300, 1000, 100)) + tuple(range(1000, 300000, 300)),
         warmup=100,
-        learning_rate=1e-3,
+        learning_rate=1e-4,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
     )
 
-    launch(experiment)
-    # experiment.run()
+    # launch(experiment)
+    experiment.run()

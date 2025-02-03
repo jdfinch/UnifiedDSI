@@ -1,0 +1,195 @@
+
+
+=================== Llama 3.1-8B ===================
+
+The MultiWOZ (Multi-Domain Wizard-of-Oz) dataset is a popular benchmark for natural language processing (NLP) and conversational AI research. The slot schema is a crucial component of this dataset, which defines the possible slots (or attributes) that can be extracted from user input and system responses in a conversation.
+
+Here is the MultiWOZ slot schema:
+
+**Domain-specific slots:**
+
+1. **Restaurant**
+        * BookRestaurant
+                + name (string)
+                + address (string)
+                + phone (string)
+                + price (string)
+                + food (string)
+                + area (string)
+                + time (string)
+                + people (int)
+                + day (string)
+                + cuisine (string)
+2. **Train**
+        * BookTrain
+                + from (string)
+                + to (string)
+                + time (string)
+                + date (string)
+                + price (string)
+                + class (string)
+3. **Hotel**
+        * BookHotel
+                + name (string)
+                + address (string)
+                + price (string)
+                + stars (int)
+                + area (string)
+                + day (string)
+4. **Attraction**
+        * BookAttraction
+                + name (string)
+                + address (string)
+                + time (string)
+                + day (string)
+5. **Taxi**
+        * BookTaxi
+                + from (string)
+                + to (string)
+                + time (string)
+                + price (string)
+6. **Police**
+        * ReportCrime
+                + location (string)
+                + crime_type (string)
+                + time (string)
+7. **Hospital**
+        * BookDoctor
+                + name (string)
+                + specialty (string)
+                + time (string)
+                + day (string)
+8. **Hospital**
+        * BookHospital
+                + name (string)
+                + address (string)
+                + time (string)
+                + day (string)
+
+
+
+=================== GPT-4o ===================
+
+Slot Schema by Domain
+
+Each domain has associated slots that define user preferences and constraints.
+1. Attraction Domain
+
+    Area – The area of the attraction (e.g., "north", "centre").
+    Name – The name of the attraction.
+    Type – The type of attraction (e.g., "museum", "park", "theater").
+
+2. Hotel Domain
+
+    Area – The area of the hotel.
+    Internet – Whether the hotel has internet access (yes/no).
+    Parking – Whether the hotel has parking (yes/no).
+    Price Range – Price category (cheap, moderate, expensive).
+    Stars – The hotel rating (e.g., 3 stars, 4 stars).
+    Type – The type of hotel (e.g., guest house, hotel).
+    Book Day – The day of the reservation.
+    Book People – Number of people.
+    Book Stay – Length of stay (number of nights).
+    Name – The name of the hotel.
+
+3. Restaurant Domain
+
+    Area – The area of the restaurant.
+    Book Day – The day of the reservation.
+    Book People – Number of people.
+    Book Time – Time of reservation.
+    Food – Type of cuisine (e.g., Italian, Chinese).
+    Price Range – Price category (cheap, moderate, expensive).
+    Name – The name of the restaurant.
+
+4. Taxi Domain
+
+    Arrive By – Arrival time.
+    Depart Time – Departure time.
+    Destination – Drop-off location.
+    Leave At – Departure time.
+    Pickup – Pickup location.
+
+5. Train Domain
+
+    Arrive By – Arrival time at the destination.
+    Book People – Number of tickets to book.
+    Day – Date of travel.
+    Departure – Departure city.
+    Destination – Arrival city.
+    Leave At – Departure time.
+
+6. Hospital Domain
+
+    Department – The medical department (e.g., "radiology", "cardiology").
+
+7. Police Domain
+
+    No specific slots, usually just address and phone number.
+
+8. General Domain
+
+    Request Slots – Any slot the user asks about in a conversation.
+    Booking Reference – A unique reference number for booked services.
+
+
+
+=================== Llama 3.2-1B ===================
+
+The MultiWOZ slot schema is a data model used in the MultiWOZ (Multi-World of Warcraft) game. It is a complex schema that represents the game's data structure, including the game's world, characters, items, and other game objects.
+
+Here is a simplified representation of the MultiWOZ schema:
+
+**Entities**
+
+* **Player**: represents a player character in the game
+* **Character**: represents a character in the game, including their attributes, skills, and equipment
+* **Item**: represents an item in the game, including its name, description, and stats
+* **Quest**: represents a quest in the game, including its name, description, and objectives
+* **Location**: represents a location in the game, including its name, description, and coordinates
+* **Event**: represents an event in the game, including its name, description, and triggers
+* **Group**: represents a group of players in the game, including their members and their relationships
+* **Role**: represents a role in the game, including its name, description, and attributes
+* **RoleGroup**: represents a group of roles in the game, including their members and their relationships
+* **RoleGroupMember**: represents a member of a role group in the game
+* **ItemGroup**: represents a group of items in the game, including their names and stats
+* **ItemGroupMember**: represents a member of an item group in the game
+* **LocationGroup**: represents a group of locations in the game, including their names and coordinates
+* **LocationGroupMember**: represents a member of a location group in the game
+
+
+=================== Llama 3.2-3B ===================
+
+The MultiWOZ (Multi-Worlds One Zone) slot schema is a data structure used in the popular text-based adventure game Zork. It's a way to represent the game's world, including rooms, items, and connections between them.
+
+Here's a simplified representation of the MultiWOZ slot schema:
+```
++---------------+
+|  Room        |
++---------------+
+|  (name)      |
+|  (description) |
+|  (north)     |
+|  (south)     |
+|  (east)      |
+|  (west)      |
+|  (items)     |
+|  (exits)     |
++---------------+
+
++---------------+
+|  Item        |
++---------------+
+|  (name)      |
+|  (description) |
+|  (weight)    |
+|  (value)     |
+|  (in_room)   |
++---------------+
+
++---------------+
+|  Exits       |
++---------------+
+|  (room)      |
+|  (direction) |
++---------------+
