@@ -9,4 +9,4 @@ export XDG_CACHE_HOME="$HF_HOME"
 
 export PYTHONPATH="src"
 
-$PATHPREFIX/$USER/miniconda3/envs/UnifiedDSI/bin/python "src/dsi/dsi2.py" "$1"
+$PATHPREFIX/$USER/miniconda3/envs/UnifiedDSICuml/bin/python "src/dsi/dsi2.py" "$1"

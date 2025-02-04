@@ -1,7 +1,8 @@
 import dataclasses as dc
 from pathlib import Path
-import json
+import json, csv
 import re
+import copy as cp
 import ast
 from ezpyzy import ansi
 import random as rng
@@ -46,6 +47,13 @@ class Dialogue:
                 elif old_state.get(slot) != value:
                     update[slot] = value
             yield update
+            old_state.update(update)
+
+    def convert_updates_to_full_states(self):
+        full_state = {}
+        for i, state in enumerate(list(self.states)):
+            full_state.update(state)
+            self.states[i] = dict(full_state)
 
     def discoveries(self):
         discovered = {}
@@ -64,13 +72,13 @@ class Dialogue:
     def display_text(self):
         """Displays dialogue turns with speaker tags"""
         for i, turn in enumerate(self.turns):
-            speaker = "User" if i % 2 == 0 else "Bot "
+            speaker = "User" if i % 2 == 0 else "Agent "
             print(f"{speaker}: {turn}")
 
     def display_states(self):
         """Displays the dialogue with state slot-values on one line under each user turn"""
         for i, turn in enumerate(self.turns):
-            speaker = "User" if i % 2 == 0 else "Bot "
+            speaker = "User" if i % 2 == 0 else "Agent "
             print(f"{speaker}: {turn}")
             if i % 2 == 0 and i // 2 < len(self.states):
                 print(ansi.foreground_gray,
@@ -80,7 +88,7 @@ class Dialogue:
     def display_states_with_descriptions(self):
         """Displays the dialogue with each slot-value and (description) under each user turn"""
         for i, turn in enumerate(self.turns):
-            speaker = "User" if i % 2 == 0 else "Bot "
+            speaker = "User" if i % 2 == 0 else "Agent "
             print(f"{speaker}: {turn}")
             if i % 2 == 0 and i // 2 < len(self.states):
                 for (domain, slot), value in self.states[i // 2].items():
@@ -91,7 +99,7 @@ class Dialogue:
         """Displays the dialogue with each changed slot-value under each user turn"""
         previous_state = dict.fromkeys(self.schema)
         for i, turn in enumerate(self.turns):
-            speaker = "User" if i % 2 == 0 else "Bot "
+            speaker = "User" if i % 2 == 0 else "Agent "
             print(f"{speaker}: {turn}")
             if i % 2 == 0 and i // 2 < len(self.states):
                 new_state = self.states[i // 2]
@@ -106,7 +114,7 @@ class Dialogue:
         """Displays the dialogue with each changed slot-value and (description) under each user turn"""
         previous_state = dict.fromkeys(self.schema)
         for i, turn in enumerate(self.turns):
-            speaker = "User" if i % 2 == 0 else "Bot "
+            speaker = "User" if i % 2 == 0 else "Agent "
             print(f"{speaker}: {turn}")
             if i % 2 == 0 and i // 2 < len(self.states):
                 new_state = self.states[i // 2]
@@ -147,6 +155,9 @@ class Dialogues(list[Dialogue]):
         self.clear_state_labels()
         for dialogue in self:
             dialogue.schema = {}
+
+    def convert_updates_to_full_states(self):
+        for dialogue in self: dialogue.convert_updates_to_full_states()
 
     def save(self, path=None):
         dials_json = [
@@ -199,50 +210,7 @@ class Dialogues(list[Dialogue]):
                     missing_description += 1
                 print(domain, '|', slot, '|', description, '|', categories)
         print(f"Total slots missing descriptions = {missing_description}")
-
-
-
-def multiwoz_to_dialogues(multiwoz_path: str) -> Dialogues:
-    dialogues = Dialogues()
-    schema = {} # (domain, slot_name) -> (description, categories)
-    for item in json.loads(Path(multiwoz_path).read_text()):
-        for turn in item["dialogue"]:
-            for action in turn["belief_state"]:
-                schema.update({tuple(s.split('-')): ('', []) for s,_ in action["slots"]})
-    for item in json.loads(Path(multiwoz_path).read_text()):
-        turns = []
-        states = []
-        previous_state = dict()
-        domains = {s.split('-', 1)[0].strip()
-            for turn_json in item['dialogue']
-            for action in turn_json['belief_state']
-            for s, _ in action['slots']}
-        for domain in domains:
-            previous_state.update({k: v for k, v in schema if k[0] == domain})
-        for turn in item["dialogue"]:
-            turns.extend([turn["system_transcript"], turn["transcript"]])
-            update = {}
-            for action in turn["belief_state"]:
-                update.update({tuple(s.split('-')):v for s,v in action["slots"]})
-            previous_state = {**previous_state, **update}
-            states.append(previous_state)
-        dialogues.append(Dialogue(
-            id=item["dialogue_idx"],
-            turns=turns[1:],
-            states=states,
-            schema={k: v for k, v in schema.items() if k[0] in domains}
-        ))
-    return dialogues
-
-
-
-def sgd_to_dialogues(sgd_path: str) -> Dialogues:
-    ...
-
-
-def dot1_to_dialogues(dot_path: str) -> Dialogues:
-    ...
-
+    
 
 def dot2_to_dialogues(dot_path: str) -> Dialogues:
     dialogues = Dialogues()
@@ -285,7 +253,209 @@ def dot2_to_dialogues(dot_path: str) -> Dialogues:
             for slot, value in list(state_dict.items()):
                 if isinstance(value, list):
                     state_dict[slot] = ', '.join(str(x) for x in value)
+                elif isinstance(value, str) and value.lower() == 'none':
+                    state_dict[slot] = None
     return dialogues
+
+
+def multiwoz_to_dialogues(multiwoz_path: str) -> Dialogues:
+    dialogues = Dialogues()
+    schema = {} # (domain, slot_name) -> (description, categories)
+    for item in json.loads(Path(multiwoz_path).read_text()):
+        for turn in item["dialogue"]:
+            for action in turn["belief_state"]:
+                schema.update({tuple(s.split('-')): ('', []) for s,_ in action["slots"]})
+    for item in json.loads(Path(multiwoz_path).read_text()):
+        turns = []
+        states = []
+        previous_state = dict()
+        domains = {s.split('-', 1)[0].strip()
+            for turn_json in item['dialogue']
+            for action in turn_json['belief_state']
+            for s, _ in action['slots']}
+        for domain in domains:
+            previous_state.update({k: v for k, v in schema if k[0] == domain})
+        for turn in item["dialogue"]:
+            turns.extend([turn["system_transcript"], turn["transcript"]])
+            update = {}
+            for action in turn["belief_state"]:
+                update.update({tuple(s.split('-')):v for s,v in action["slots"]})
+            previous_state = {**previous_state, **update}
+            states.append(previous_state)
+        dialogues.append(Dialogue(
+            id=item["dialogue_idx"],
+            turns=turns[1:],
+            states=states,
+            schema={k: v for k, v in schema.items() if k[0] in domains}
+        ))
+    return dialogues
+
+def sgd_to_dialogues(
+    sgd_path: str,
+    apply_sgdx: bool = True,
+    sgdx_rng_seed: int = None,
+    remove_domain_numbers: bool = True,
+    filter_out_domains = (
+        'Hotels_1', 'Hotels_2', 'Hotels_3', 'Hotels_4',  
+        'Restaurants_1', 'Restaurants_2',
+        'RideSharing_1', 'RideSharing_2',
+        'RentalCars_1', 'RentalCars_2',
+        'Travel_1', # <- similar to attraction in mwoz
+        'Trains_1',
+    ),
+) -> Dialogues:
+    filter_out_domains = set(filter_out_domains)
+    schema = {}
+    schema_json = json.loads((Path(sgd_path)/'schema.json').read_text())
+    for service_json in schema_json:
+        domain = service_json['service_name']
+        if domain in filter_out_domains: continue
+        slots_in_service = {}
+        for slot_json in service_json['slots']:
+            slot_name = slot_json['name']
+            slot_desc = slot_json['description']
+            slot_cats = slot_json['possible_values']
+            slots_in_service[slot_name] = (slot_desc, slot_cats)
+        for intent_json in service_json['intents']:
+            for user_slot_name in (
+                intent_json['required_slots'] + list(intent_json['optional_slots'])
+            ):
+                schema.setdefault(domain, {})[user_slot_name] = slots_in_service[user_slot_name]
+    n_dialogues_filtered_out = 0
+    sgd_data = Dialogues()
+    dialogues_jsons = []
+    for file in Path(sgd_path).glob('dialogues_*.json'):
+        file_json = json.loads(file.read_text())
+        for dialogue_json in file_json: dialogues_jsons.append(dialogue_json)
+    for dialogue_json in dialogues_jsons:
+        domains = dialogue_json['services']
+        if filter_out_domains & set(domains): 
+            n_dialogues_filtered_out += 1
+            continue
+        dialogue = Dialogue(id=dialogue_json['dialogue_id'])
+        dialogue_schema = {domain: schema[domain] for domain in domains}
+        dialogue_schema = {(domain, slot): slot_info 
+            for domain, ds in dialogue_schema.items() for slot, slot_info in ds.items()}
+        dialogue.schema = dialogue_schema
+        for turn_json in dialogue_json['turns']:
+            speaker = turn_json['speaker']
+            text = turn_json['utterance']
+            dialogue.turns.append(text)
+            if speaker == 'USER':
+                state = {}
+                for frame_json in turn_json['frames']:
+                    domain = frame_json['service']
+                    for slot, value_options in frame_json['state']['slot_values'].items():
+                        state[domain, slot] = value_options[0]
+                dialogue.states.append(state)
+        sgd_data.append(dialogue)
+    print(f'Filtered out {n_dialogues_filtered_out}/{len(dialogues_jsons)} dialogues when loading SGD from {sgd_path}')
+    if apply_sgdx:
+        sgdx = json.loads(Path('data/sgd/sgdx.json').read_text())
+        r = rng.Random(sgdx_rng_seed)
+        for dialogue in sgd_data:
+            schema_map = {
+                (domain, slot): (
+                    domain, 
+                    (x:=r.choice(list(sgdx[domain][slot].values())))['name'], 
+                    x['description'],
+                    x['possible_values'])
+                for domain, slot in dialogue.schema
+            }
+            dialogue.schema = {
+                schema_map[slot][:2]: schema_map[slot][2:]
+                for slot in dialogue.schema
+            }
+            dialogue.states = [
+                {
+                    schema_map[slot][:2]: value
+                    for slot, value in state.items()
+                }
+                for state in dialogue.states
+            ]
+    if remove_domain_numbers:
+        for dialogue in sgd_data:
+            dialogue.states = [{
+                    (domain.rstrip('_1234567890'), slot): value
+                    for (domain, slot), value in state.items()}
+                for state in dialogue.states]
+            dialogue.schema = {
+                (domain.rstrip('_1234567890'), slot): slot_info
+                for (domain, slot), slot_info in dialogue.schema.items()
+            }
+    return sgd_data
+
+
+def dot1_to_dialogues(dot_path: str) -> Dialogues:
+    dot_path = Path(dot_path)
+    slot_path = Path(dot_path) / 'slot.csv'
+    slot_value_path = Path(dot_path) / 'slot_value.csv'
+    turn_path = Path(dot_path) / 'turn.csv'
+    dialogues = Dialogues()
+    turn_table = list(csv.DictReader(turn_path.read_text().splitlines()))
+    slot_table = list(csv.DictReader(slot_path.read_text().splitlines()))
+    slot_value_table = list(csv.DictReader(slot_value_path.read_text().splitlines()))
+    dialogues_by_id: dict[str, Dialogue] = {}
+    dialogues_by_domain: dict[str, list[Dialogue]] = {}
+    turn_id_to_domain_dialogue_index = {}
+    for index, row in enumerate(turn_table):
+        row = {k: json.loads(v) for k, v in row.items()}
+        domain = row['domain']
+        dialogue_id = row['dialogue']
+        if dialogue_id not in dialogues_by_id:
+            dialogue = Dialogue(dialogue_id)
+            dialogues_by_id[dialogue_id] = dialogue
+            dialogues_by_domain.setdefault(domain, []).append(dialogue)
+        dialogue = dialogues_by_id[dialogue_id]
+        text = row['text']
+        index = row['turn_index']
+        speaker = ['speaker'][0]
+        turn_id = row['turn_id']
+        turn_id_to_domain_dialogue_index[turn_id] = (domain, dialogue_id, index)
+        while len(dialogue.turns) <= index: dialogue.turns.append(None)
+        dialogue.turns[index] = text
+    slots_by_id = {}
+    for index, row in enumerate(slot_table):
+        row = {k: json.loads(v) for k, v in row.items()}
+        name = row['slot']
+        description = row['description']
+        domain = row['domain']
+        slot_id = row['slot_id']
+        for dialogue in dialogues_by_domain[domain]:
+            slots_by_id[slot_id] = (name, description)
+            dialogue.schema['Info', name] = description
+    for index, row in enumerate(slot_value_table):
+        row = {k: json.loads(v) for k, v in row.items()}
+        slot = row['slot']
+        value = row['value']
+        if value == '?':
+            continue
+        turn_id = row['turn_id']
+        domain, dialogue_id, index = turn_id_to_domain_dialogue_index[turn_id]
+        slot_id = row['slot_id']
+        slot_value_id = row['slot_value_id']
+        dialogue = dialogues_by_id[dialogue_id]
+        while len(dialogue.states) <= index: dialogue.states.append({})
+        state = dialogue.states[index]
+        slot_name, slot_desc = slots_by_id[slot_id]
+        state['Info', slot_name] = value
+    dialogues = Dialogues()
+    for dialogue in dialogues_by_id.values():
+        left = cp.copy(dialogue)
+        right = cp.copy(dialogue)
+        left_states = [dict(s) for s in left.states]
+        for i in range(1, len(left_states)-1, 2):
+            left_states[i+1].update(left_states[i])
+        left.states = left_states[::2]
+        right.turns = right.turns[1:]
+        right_states = [dict(s) for s in right.states[1:]]
+        for i in range(1, len(right_states)-1, 2):
+            right_states[i+1].update(right_states[i])
+        right.states = right_states
+        dialogues.extend((left, right))
+    dialogues.convert_updates_to_full_states()
+    return dialogues
+    
 
 
 if __name__ == '__main__':
@@ -294,8 +464,13 @@ if __name__ == '__main__':
     # dialogues[0].display_text()
     # dialogues[0].display_states()
 
-    dialogues = dot2_to_dialogues('data/d0t/dot_2')
+    # dialogues = dot2_to_dialogues('data/d0t/dot_2')
     # dialogues.analysis_missing_descriptions()
-    dialogues[241].display_text()
+    # dialogues[241].display_text()
     # dialogues[0].display_final_schema()
+
+    # sgd_valid = sgd_to_dialogues('data/sgd/train')
+
+    data = dot1_to_dialogues('data/d0t')
+    rng.choice(data).display_state_updates()
 

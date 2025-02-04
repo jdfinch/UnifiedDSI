@@ -33,5 +33,5 @@ if __name__ == "__main__":
         # 'ex/CaptivatingGeneral_tebu',
         # 'ex/SpiritedKuiil_tebu',
         # 'ex/DauntlessEwok_tebu',
-        'ex/SpiritedBarriss_tebu/10000',
+        'ex/MysticalMirial_tebu/10000',
     ))
