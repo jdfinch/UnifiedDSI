@@ -737,10 +737,19 @@ if __name__ == '__main__':
         model_to_load='meta-llama/Llama-3.2-3B-Instruct',
         base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
         quantization='nf4dq',
+<<<<<<< HEAD
         max_seq_len=2048,
         max_new_tokens=1024,
         physical_batch_size=2,
         device='cuda:5',
+=======
+
+        max_seq_len=4096,
+        max_new_tokens=2048,
+        physical_batch_size=1,
+        device='cuda:6',
+
+>>>>>>> 603f032ab5bd849d10ae658b8d82b9f1ef12594b
         new_lora_rank=1,
         epochs=100,
         batch_size=8,
