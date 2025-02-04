@@ -71,6 +71,16 @@ class SearchDialogueGeneration:
         self.rng = rng.Random(self.rng_seed)
         self.discovered_docstrings = {}
 
+    def __deepcopy__(self, memodict={}):
+        if id(self) in memodict: return memodict[id(self)]
+        copy = cp.copy(self)
+        for var, val in vars(copy).items():
+            if var != 'code_namespace':
+                val = cp.deepcopy(val)
+            setattr(copy, var, val)
+        memodict[id(self)] = copy
+        return copy
+
     def interpret(self, code, temporary_namespace=True):
         namespace = dict(self.code_namespace) if temporary_namespace else self.code_namespace
         old_namespace = dict(namespace)
@@ -580,6 +590,7 @@ def gen_search_dial_main(
     n_tasks = 5,
     n_schemas_per_task = 2,
     n_dials_per_schema = 2,
+    force_tasks = (),
 ):
     dot_folder = Path('data/d0t')
     iterations = [int(dot_iter.name.split('_')[1]) for dot_iter in dot_folder.iterdir()
@@ -587,7 +598,10 @@ def gen_search_dial_main(
     current_iteration = 1 if not iterations else max(iterations) + 1
     dot_iter_folder = dot_folder/f"dot_{current_iteration}"
     searchdials = SearchDialogues()
-    tasks_list = searchdials.gen_search_dialogue_tasks(n_tasks)
+    if force_tasks:
+        searchdials.obj_tasks_list = list(force_tasks)
+    else:
+        tasks_list = searchdials.gen_search_dialogue_tasks(n_tasks)
     all_schema_counter = 0
     for task_i, task in enumerate(searchdials.obj_tasks_list, 1):
         for i_schema in range(n_schemas_per_task):
@@ -704,5 +718,16 @@ def gen_search_dial_main(
                 continue
 
 if __name__ == '__main__':
-    gen_search_dial_main(n_tasks=100, n_schemas_per_task=1, n_dials_per_schema=5)
+    gen_search_dial_main(
+        n_tasks=2,
+        n_schemas_per_task=1,
+        n_dials_per_schema=30,
+        force_tasks=(
+            "A college student is getting help from an advisor to look for a major, then a course, then a section that fits their schedule.",
+            "A soccer coach is getting help from a coaching assistant to look for a formation for the upcoming match, then a position for the star player.",
+            "An assisted living manager is getting help from a consultant to look for a new hire, then a new weekly activity for the residents.",
+            "An artist is getting help from an instructor to choose a subject matter, then a medium, then a venue to display their work.",
+            "A couch potato is getting help from a life coach to look for an exercise activity, then a routine."
+        )
+    )
 

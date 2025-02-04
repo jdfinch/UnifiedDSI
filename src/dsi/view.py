@@ -24,7 +24,5 @@ def view_predictions(experiment_folders):
 
 if __name__ == "__main__":
     view_predictions((
-        'ex/CaptivatingGeneral_tebu',
-        'ex/SpiritedKuiil_tebu',
-        'ex/DauntlessEwok_tebu',
+        'ex/trial',
     ))

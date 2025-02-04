@@ -390,7 +390,7 @@ if __name__ == '__main__':
 
     ####### FOR DEBUG  :D ######################################################################
 
-    machine = 'tebuna'
+    machine = 'local'
     projdict = {}
     if machine == 'local':
         projdict = dict(
@@ -407,18 +407,18 @@ if __name__ == '__main__':
         base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
         quantization='nf4dq',
         max_seq_len=2048,
-        physical_batch_size=4,
-        device='cuda:6',
+        physical_batch_size=1,
+        device='cuda',
         new_lora_rank=1,
         epochs=100,
         batch_size=4,
         steps_to_validate_on=(25, 50, 75, 100, 150, 200, 250)
             + tuple(range(300, 1000, 100)) + tuple(range(1000, 300000, 300)),
         warmup=100,
-        learning_rate=1e-3,
+        learning_rate=1e-4,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
     )
 
-    launch(experiment)
-    # experiment.run()
+    # launch(experiment)
+    experiment.run()
