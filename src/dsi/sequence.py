@@ -90,7 +90,7 @@ def tokenize(
             for i, j in sequence.slots.get(span_type, ()):
                 str_indices_of_labels.update(range(i, j))
         for token_id, (i, j) in zip(tokens, offsets):
-            if i in str_indices_of_labels or j in str_indices_of_labels:
+            if i in str_indices_of_labels or j-1 in str_indices_of_labels:
                 token_id_labels = (sequence.text[i:j], token_id, token_id)
             else:
                 token_id_labels = (sequence.text[i:j], token_id, -100)

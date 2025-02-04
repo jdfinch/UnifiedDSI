@@ -138,6 +138,16 @@ class Dialogue:
 
 class Dialogues(list[Dialogue]):
 
+    def clear_state_labels(self):
+        for dialogue in self:
+            for state in dialogue.states:
+                state.clear()
+
+    def clear_schema_and_state_labels(self):
+        self.clear_state_labels()
+        for dialogue in self:
+            dialogue.schema = {}
+
     def save(self, path=None):
         dials_json = [
             dial.save() for dial in self
@@ -180,6 +190,15 @@ class Dialogues(list[Dialogue]):
                 del dialogues_by_domain[domain_selected]
                 del domain_counts[domain_selected]
         return chosen_dialogues
+
+    def analysis_missing_descriptions(self):
+        missing_description = 0
+        for dialogue in self:
+            for (domain, slot), (description, categories) in dialogue.schema.items():
+                if description.strip() == '':
+                    missing_description += 1
+                print(domain, '|', slot, '|', description, '|', categories)
+        print(f"Total slots missing descriptions = {missing_description}")
 
 
 
@@ -226,7 +245,7 @@ def dot1_to_dialogues(dot_path: str) -> Dialogues:
 
 
 def dot2_to_dialogues(dot_path: str) -> Dialogues:
-    dialogues = []
+    dialogues = Dialogues()
     dot_path = Path(dot_path)
     for task_path in dot_path.iterdir():
         if not task_path.is_dir(): continue
@@ -261,16 +280,22 @@ def dot2_to_dialogues(dot_path: str) -> Dialogues:
                         state[slot_domain, slot_name] = state_dict.get(slot_name)
                     dialogue.states.append(state.copy())
             dialogues.append(dialogue)
-    return Dialogues(dialogues)
+    for dialogue in dialogues:
+        for state_dict in dialogue.states:
+            for slot, value in list(state_dict.items()):
+                if isinstance(value, list):
+                    state_dict[slot] = ', '.join(str(x) for x in value)
+    return dialogues
 
 
 if __name__ == '__main__':
 
-    dialogues = multiwoz_to_dialogues('data/multiwoz24/original/dev_dials.json')
-    dialogues[0].display_text()
-    dialogues[0].display_states()
-
-    # dialogues = dot2_to_dialogues('data/d0t/dot_2')
+    # dialogues = multiwoz_to_dialogues('data/multiwoz24/original/dev_dials.json')
     # dialogues[0].display_text()
+    # dialogues[0].display_states()
+
+    dialogues = dot2_to_dialogues('data/d0t/dot_2')
+    # dialogues.analysis_missing_descriptions()
+    dialogues[241].display_text()
     # dialogues[0].display_final_schema()
 
