@@ -1,3 +1,28 @@
+
+"""
+MODIFICATION OF DSI2 WITH LORA MERGING!!!!!!!!!
+HAS BEEN INTEGRATED INTO MAIN DSI2.PY AT THIS POINT!!!!!
+
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig, AutoTokenizer
+
+device = "cuda:6"
+
+model_id = "facebook/opt-125m"
+
+model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=BitsAndBytesConfig(load_in_4bit=True))
+model = model.to(device)
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+model.dequantize()
+
+text = tokenizer("Hello my name is", return_tensors="pt").to(device)
+
+out = model.generate(**text)
+print(tokenizer.decode(out[0]))
+"""
+
+
+
 import pathlib as pl
 from pathlib import Path
 import os
@@ -39,9 +64,8 @@ import peft
 import utils
 import copy as cp
 import dsi.clustering as cl
-from collections import defaultdict, deque
 import typing as T
-from peft import PeftModel
+from peft import PeftModel # MODSF
 
 
 
@@ -52,6 +76,7 @@ class DsiExperiment:
     root_path: str = '/local/scratch/jdfinch'
     project_path: str = '/local/scratch/jdfinch/2025/UnifiedDSI'
     tag: str = ''
+
     load_finetuned_lora: bool = False
 
     train_data_path: str = 'data/d0t/dot_2'
@@ -66,7 +91,7 @@ class DsiExperiment:
     train_downsample_seqs: int|None = None
 
     eval_data_path: str = 'data/multiwoz24/dev_dials.json'
-    downsample_eval_dialogues: int|None = None
+    downsample_eval_dialogues: int|None = 5
     steps_to_validate_on: tuple[int, ...] = (100, 200, 300)
 
     train_num_turn_level_seqs_per_dialogue: int = 2
@@ -78,14 +103,7 @@ class DsiExperiment:
     state_mode: T.Literal['states', 'updates'] = 'states'
     desc_mode: T.Literal['descriptions', 'slotnames'] = 'descriptions'
 
-    infer_independently_per_dialogue: bool = False
-    infer_independently_per_turn: bool = False
-    infer_full_dialogue_schema_first: bool|int = 10
-    max_schema_size: int = 100
-    infer_bad_slots_by_tracked_counts: bool = False
-    infer_bad_slots_by_min_count_per_dialogue_window: tuple[int, int]|None = None
-
-    cluster_format: str = 'svd'
+    cluster_format: str = None
     cluster_min_samples: int = 5
     cluster_min_size: int = 2
     cluster_max_size: int = 0
@@ -127,8 +145,6 @@ class DsiExperiment:
         self.tokenizer: hf.LlamaTokenizer = ...
         self.experiment_path = Path(self.project_path)/'ex'/self.experiment_name
         self.iteration_path = Path(self.project_path)/'ex'/self.experiment_name/str(self.current_step)
-        self.streaming_discovery_counts: dict[tuple[str, str], int] = defaultdict(int)
-        self.state_tracking_counts: dict[tuple[str, str], int] = defaultdict(int)
 
     def load_model(self):
         if self.quantization and self.quantization.startswith('nf4'):
@@ -140,6 +156,7 @@ class DsiExperiment:
             quant_args = dict(load_in_8bit=True)
         else:
             quant_args = {}
+        # MODSF
         if self.load_finetuned_lora:
             self.model = hf.AutoModelForCausalLM.from_pretrained(
                 self.base_model_repo_id, **quant_args,
@@ -155,6 +172,7 @@ class DsiExperiment:
                 **({} if self.device == 'cpu' else dict(attn_implementation='flash_attention_2')),
                 torch_dtype=pt.bfloat16,
                 device_map='auto' if self.device == 'auto' else {'': self.device})
+        # MODSF
         if self.new_lora_rank:
             lora_config = peft.LoraConfig(
                 r=self.new_lora_rank,
@@ -177,11 +195,11 @@ class DsiExperiment:
         else:
             raise NotImplementedError
         if self.downsample_eval_dialogues:
-            evaluation_data = evaluation_data.downsample(self.downsample_eval_dialogues)
+            evaluation_data = evaluation_data.downsample(self.downsample_eval_dialogues, self.rng) #MODSF
         gold_data = cp.deepcopy(evaluation_data)
         evaluation_data.clear_schema_and_state_labels()
         if self.epochs == 0:
-            self.evaluate(evaluation_data, gold_data)
+            self.evaluate(evaluation_data, gold_data, pred_save_path=self.iteration_path)
             return
         if 'd0t' in self.train_data_path and Path(self.train_data_path).name != 'd0t':
             training_data: dial.Dialogues = dial.dot2_to_dialogues(self.train_data_path)
@@ -209,7 +227,7 @@ class DsiExperiment:
         experiment_path.mkdir(parents=True, exist_ok=True)
         training_data.downsample(min(30, len(training_data))).save(experiment_path/'train_dials.json')
         if self.current_step == 0 and 0 in self.steps_to_validate_on:
-            self.evaluate(evaluation_data, gold_data)
+            self.validate(evaluation_data, gold_data)
         if self.epochs > 0:
             for self.current_epoch, steps in enumerate(self.training(training_data), 1):
                 for step_in_epoch, nll in enumerate(steps, 1):
@@ -231,28 +249,12 @@ class DsiExperiment:
             {**y.save(), 'predictions': x} for y, x in zip(data, generated)
         ], indent=2))
 
-
-    def evaluate(self, data: dial.Dialogues, gold: dial.Dialogues):
-        pred_save_path = self.iteration_path
-        self.iteration_path.mkdir(parents=True, exist_ok=True)
-        (self.iteration_path/'experiment.json').write_text(json.dumps(
-            {f.name: getattr(self, f.name) for f in dc.fields(self)}, indent=2)) # noqa
+    def evaluate(self, data: dial.Dialogues, gold: dial.Dialogues, pred_save_path=None):
+        if pred_save_path: Path(pred_save_path).mkdir(parents=True, exist_ok=True)
         predictions = self.infer_states(data, pred_save_path=pred_save_path)
-        assert len(predictions) == len(gold)
-        for pred_dial, gold_dial in zip(predictions, gold):
-            assert pred_dial.id == gold_dial.id
-            assert len(pred_dial.states) == len(gold_dial.states)
         for dialogue in predictions:
             dialogue.display_state_updates()
             print('-'*100)
-        tvresults = turn_vector_match_evaluation(gold, predictions)
-        emresults = exact_match_evaluation(gold, predictions)
-        tvresults_json = json.dumps(vars(tvresults), indent=2)
-        emresults_json = json.dumps(vars(emresults), indent=2)
-        print('===== Results =====')
-        print(emresults_json)
-        (Path(pred_save_path)/'results.json').write_text(tvresults_json)
-        (Path(pred_save_path)/'em_results.json').write_text(emresults_json)
         return predictions
 
     def training(self, data: dial.Dialogues):
@@ -320,66 +322,33 @@ class DsiExperiment:
 
     def infer_states(self, dialogues: dial.Dialogues, pred_save_path=None) -> dial.Dialogues:
         """Predict the dialogue state every turn (This is the top level!)"""
-        clusterer = cl.Clusterer(
-            format=self.cluster_format,
-            min_samples=self.cluster_min_samples,
-            min_cluster_size=self.cluster_min_size,
-            max_cluster_size=self.cluster_max_size,
-            merge_eps=self.cluster_merge_eps,
-            leaf_size=self.cluster_leaf_size)
-        window = defaultdict(list)
+        self.infer_independently_per_dialogue = False
+        self.infer_independently_per_turn = False
+        self.infer_full_dialogue_schema_first_n_dialogues: bool|int = 10
         if self.state_mode == 'states':
             if self.infer_independently_per_dialogue and self.infer_full_dialogue_schema_first:
                 schema_predictions = self.predict_last_turn(dialogues)
-                if pred_save_path: dialogues.save(Path(pred_save_path)/'dsi_dial_schemas.json')
-                schema_predictions = clusterer.cluster_slots(
-                        schema_predictions, format=self.cluster_format, gridsearch=True)
-                if pred_save_path: schema_predictions.save(Path(pred_save_path)/'dsi_dial_schemas_clustered.json')
+                schema_predictions = cl.Clusterer(
+                    format=self.cluster_format,
+                    min_samples=self.cluster_min_samples,
+                    min_cluster_size=self.cluster_min_size,
+                    max_cluster_size=self.cluster_max_size,
+                    merge_eps=self.cluster_merge_eps,
+                    leaf_size=self.cluster_leaf_size).cluster_slots(
+                        schema_predictions, format=self.cluster_format)
                 states_predictions = self.predict_each_turn(dialogues, dst_mode=True)
                 for dialogue, states_prediction in zip(schema_predictions, states_predictions):
                     for state, state_prediction in zip(dialogue.states, states_prediction):
                         state.update(state_prediction.states[-1])
-                if pred_save_path: dialogues.save(Path(pred_save_path)/'dsi_dial_states.json')
                 return dialogues
-            elif not self.infer_independently_per_dialogue and self.infer_full_dialogue_schema_first:
+            elif not self.infer_independently_per_dialogue and self.infer_full_dialogue_schema_first_n_dialogues:
                 running_schema = {}
-                shuffled = lambda ls: [(x:=list(ls)), self.rng.shuffle(x)][0]
-                dialogue_stream = dial.Dialogues(shuffled(dialogues))
-                for i, (dialogue, _) in enumerate(tqdm(list(zip(
-                    dialogue_stream, it.cycle([...]) if isinstance(self.infer_full_dialogue_schema_first, bool)
-                    else range(self.infer_full_dialogue_schema_first)
-                )), 'Stream Schema')):
+                dialogues = dial.Dialogues(dialogues)
+                self.rng.shuffle(dialogues)
+                for dialogue, _ in zip(dialogues, range(self.infer_full_dialogue_schema_first_n_dialogues)):
                     dialogue.schema = running_schema
                     self.predict_last_turn([dialogue])
-                    for slot in dialogue.schema:
-                        window[slot].append(slot in dialogue.states[-1])
-                    if self.infer_bad_slots_by_min_count_per_dialogue_window:
-                        quota, timeframe = self.infer_bad_slots_by_min_count_per_dialogue_window
-                        for slot, slot_history in list(window.items()):
-                            if (len(slot_history) >= timeframe and sum(slot_history[-timeframe:]) < quota):
-                                running_schema.pop(slot, None)
-                                print(f'Eliminated {slot} with history {window[slot]}')
-                                del window[slot]
-                    if len(running_schema) > self.max_schema_size:
-                        if self.infer_bad_slots_by_tracked_counts:
-                            while len(running_schema) > self.max_schema_size:
-                                worst_slot = min(running_schema, key=self.streaming_discovery_counts.get)
-                                print(f'Eliminated {worst_slot} with count {self.streaming_discovery_counts[worst_slot]}')
-                                del self.streaming_discovery_counts[worst_slot]
-                                running_schema.pop(worst_slot, None)
-                        else: # simple fifo
-                            for slot,_ in zip(list(running_schema), range(len(running_schema) - self.max_schema_size)):
-                                running_schema.pop(slot, None) # remove from the beginning (least recently hit slot)
-                                print(f'Eliminated {slot} with count {self.streaming_discovery_counts[slot]}')
-                    dialogue.schema = dict(running_schema)
-                if self.infer_bad_slots_by_min_count_per_dialogue_window:
-                    for slot, slot_history in window.items():
-                        if sum(slot_history) < quota:
-                            running_schema.pop(slot, None)
-                if pred_save_path: dialogue_stream.save(Path(pred_save_path)/'dsi_dial_schema_stream.json')
-                for dialogue in dialogues: 
-                    dialogue.schema = running_schema
-                    dialogue.states = [{} for _ in dialogue.states]
+                if pred_save_path: dialogues.save(Path(pred_save_path)/'dsi_dial_schema_stream.json')
                 states_predictions = self.predict_each_turn(dialogues, dst_mode=True)
                 for dialogue, states_prediction in zip(dialogues, states_predictions):
                     for state, state_prediction in zip(dialogue.states, states_prediction):
@@ -388,49 +357,14 @@ class DsiExperiment:
                 return dialogues
             elif (not self.infer_independently_per_dialogue 
                   and not self.infer_independently_per_turn 
-                  and not self.infer_full_dialogue_schema_first):
+                  and not self.infer_full_dialogue_schema_first_n_dialogues):
                 running_schema = {}
-                shuffled = lambda ls: [(x:=list(ls)), self.rng.shuffle(x)][0]
-                dialogue_stream = dial.Dialogues(shuffled(dialogues))
-                for dialogue in tqdm(dialogue_stream, 'Stream States'):
+                for dialogue in dialogues:
                     dialogue.schema = running_schema
-                    contexts = self.cut_dialogues_into_contexts(dial.Dialogues([dialogue]), cut_every_context=True)
+                    contexts = self.cut_dialogues_into_contexts(dial.Dialogues([dialogue]))
                     for context, state in zip(contexts, dialogue.states):
-                        self.predict_last_turn([context])
+                        self.predict_last_turn(context)
                         state.update(context.states[-1])
-                        if self.infer_bad_slots_by_tracked_counts:
-                            while len(running_schema) > self.max_schema_size:
-                                worst_slot = min(running_schema, key=self.streaming_discovery_counts.get)
-                                print(f'Eliminated {worst_slot} with count {self.streaming_discovery_counts[worst_slot]}')
-                                del self.streaming_discovery_counts[worst_slot]
-                                running_schema.pop(worst_slot, None)
-                        else: # simple fifo
-                            for slot,_ in zip(list(running_schema), range(len(running_schema) - self.max_schema_size)):
-                                running_schema.pop(slot, None) # remove from the beginning (least recently hit slot)
-                                print(f'Eliminated {slot} with count {self.streaming_discovery_counts[slot]}')
-                    for slot in dialogue.schema:
-                        window[slot].append(any(slot in state for state in dialogue.states))
-                    if self.infer_bad_slots_by_min_count_per_dialogue_window:
-                        quota, timeframe = self.infer_bad_slots_by_min_count_per_dialogue_window
-                        for slot, slot_history in list(window.items()):
-                            if (len(slot_history) >= timeframe and sum(slot_history[-timeframe:]) < quota):
-                                running_schema.pop(slot, None)
-                                print(f'Eliminated {slot} with history {window[slot]}')
-                                del window[slot]
-                    dialogue.schema = dict(running_schema)
-                if self.infer_bad_slots_by_min_count_per_dialogue_window:
-                    for slot, slot_history in window.items():
-                        if sum(slot_history) < quota:
-                            running_schema.pop(slot, None)
-                if pred_save_path: dialogue_stream.save(Path(pred_save_path)/'dsi_stream_states.json')
-                for dialogue in dialogues: 
-                    dialogue.schema = running_schema
-                    dialogue.states = [{} for _ in dialogue.states]
-                states_predictions = self.predict_each_turn(dialogues, dst_mode=True)
-                for dialogue, states_prediction in zip(dialogues, states_predictions):
-                    for state, state_prediction in zip(dialogue.states, states_prediction):
-                        state.update(state_prediction.states[-1])
-                if pred_save_path: dialogues.save(Path(pred_save_path)/'dsi_dial_states.json')
                 return dialogues
             else:
                 raise NotImplementedError
@@ -440,7 +374,6 @@ class DsiExperiment:
                 for dialogue, states_prediction in zip(dialogues, states_predictions):
                     for state, state_prediction in zip(dialogue.states, states_prediction):
                         state.update(state_prediction.states[-1])
-                if pred_save_path: dialogues.save(Path(pred_save_path)/'dsg_updates.json')
                 dialogues = cl.Clusterer(
                     format=self.cluster_format,
                     min_samples=self.cluster_min_samples,
@@ -448,56 +381,20 @@ class DsiExperiment:
                     max_cluster_size=self.cluster_max_size,
                     merge_eps=self.cluster_merge_eps,
                     leaf_size=self.cluster_leaf_size).cluster_slots(
-                        dialogues, format=self.cluster_format, gridsearch=True)
+                        dialogues, format=self.cluster_format)
                 dialogues.convert_updates_to_full_states()
-                if pred_save_path: dialogues.save(Path(pred_save_path)/'dsg_states_clustered.json')
                 return dialogues
             elif self.infer_independently_per_dialogue:
-                raise NotImplementedError
+                ...
             elif not self.infer_independently_per_dialogue and not self.infer_independently_per_turn:
                 running_schema = {}
-                shuffled = lambda ls: [(x:=list(ls)), self.rng.shuffle(x)][0]
-                dialogue_stream = dial.Dialogues(shuffled(dialogues))
-                for dialogue in tqdm(dialogue_stream, 'Stream Updates'):
+                for dialogue in dialogues:
                     dialogue.schema = running_schema
-                    contexts = self.cut_dialogues_into_contexts(dial.Dialogues([dialogue]), cut_every_context=True)
+                    contexts = self.cut_dialogues_into_contexts(dial.Dialogues([dialogue]))
                     for context, state in zip(contexts, dialogue.states):
-                        self.predict_last_turn([context])
+                        self.predict_last_turn(context)
                         state.update(context.states[-1])
-                        if self.infer_bad_slots_by_tracked_counts:
-                            while len(running_schema) > self.max_schema_size:
-                                worst_slot = min(running_schema, key=self.streaming_discovery_counts.get)
-                                print(f'Eliminated {worst_slot} with count {self.streaming_discovery_counts[worst_slot]}')
-                                del self.streaming_discovery_counts[worst_slot]
-                                running_schema.pop(worst_slot, None)
-                        else: # simple fifo
-                            for slot,_ in zip(list(running_schema), range(len(running_schema) - self.max_schema_size)):
-                                running_schema.pop(slot, None) # remove from the beginning (least recently hit slot)
-                                print(f'Eliminated {slot} with count {self.streaming_discovery_counts[slot]}')
                     dialogue.convert_updates_to_full_states()
-                    for slot in dialogue.schema:
-                        window[slot].append(any(slot in state for state in dialogue.states))
-                    if self.infer_bad_slots_by_min_count_per_dialogue_window:
-                        quota, timeframe = self.infer_bad_slots_by_min_count_per_dialogue_window
-                        for slot, slot_history in list(window.items()):
-                            if (len(slot_history) >= timeframe and sum(slot_history[-timeframe:]) < quota):
-                                running_schema.pop(slot, None)
-                                print(f'Eliminated {slot} with history {window[slot]}')
-                                del window[slot]
-                    dialogue.schema = dict(running_schema)
-                if self.infer_bad_slots_by_min_count_per_dialogue_window:
-                    for slot, slot_history in window.items():
-                        if sum(slot_history) < quota:
-                            running_schema.pop(slot, None)
-                if pred_save_path: dialogue_stream.save(Path(pred_save_path)/'dsi_update_stream_states.json')
-                for dialogue in dialogues: 
-                    dialogue.schema = running_schema
-                    dialogue.states = [{} for _ in dialogue.states]
-                states_predictions = self.predict_each_turn(dialogues, dst_mode=True)
-                for dialogue, states_prediction in zip(dialogues, states_predictions):
-                    for state, state_prediction in zip(dialogue.states, states_prediction):
-                        state.update(state_prediction.states[-1])
-                if pred_save_path: dialogues.save(Path(pred_save_path)/'dsi_dial_states.json')
                 return dialogues
             else:
                 raise NotImplementedError
@@ -507,7 +404,7 @@ class DsiExperiment:
     def predict_each_turn(self, dialogues: dial.Dialogues, dst_mode=False) -> list[dial.Dialogues]:
         """Output in the native sequence format for this model settings"""
         data = []
-        for dialogue in tqdm(dialogues, 'Predict Each Turn'):
+        for dialogue in dialogues:
             contexts = self.cut_dialogues_into_contexts([dialogue], cut_every_context=True)
             self.predict_last_turn(contexts, dst_mode=dst_mode)
             data.append(contexts)
@@ -522,25 +419,16 @@ class DsiExperiment:
             last_state = {}
             for domain in state.domain_states:
                 for slot_value in domain.slot_values:
-                    if slot_value.value.lower() in ('none', ''):
-                        continue
                     if (
                         (domain.domain, slot_value.slot) not in dialogue.schema
                         and (self.desc_mode == 'slotnames' or hasattr(slot_value, 'description'))
-                    ): # claims to discover a new slot
+                    ):
                         if dst_mode is False:
                             dialogue.schema[domain.domain, slot_value.slot] = (
                                 getattr(slot_value, 'description', ''), [])
                             last_state[domain.domain, slot_value.slot] = slot_value.value    
-                    elif (domain.domain, slot_value.slot) in dialogue.schema: # tracked a slot
+                    else:
                         last_state[domain.domain, slot_value.slot] = slot_value.value
-                    if (domain.domain, slot_value.slot) in dialogue.schema: # got a slot hit
-                        dialogue.schema[domain.domain, slot_value.slot] = dialogue.schema.pop(
-                            (domain.domain, slot_value.slot))
-                        if dst_mode:
-                            self.state_tracking_counts[domain.domain, slot_value.slot] += 1
-                        else:
-                            self.streaming_discovery_counts[domain.domain, slot_value.slot] += 1
             dialogue.states[-1] = last_state
         return dialogues
 
@@ -764,14 +652,12 @@ class DsiEvalResults:
     value_precision: float = None
     value_recall: float = None
     value_f1: float = None
-    macro_value_precision: float = None
-    macro_value_recall: float = None
-    macro_value_f1: float = None
-    matching: dict[str, str] = None
-    matcher: str = 'turn vector'
+    value_identification_precision: float = None
+    value_identification_recall: float = None
+    value_identification_f1: float = None
 
     def __post_init__(self):
-        for metric in ('slot', 'value', 'macro_value'):
+        for metric in ('slot', 'value', 'value_identification'):
             try:
                 setattr(self, f"{metric}_f1", 
                     2 / (1/getattr(self, f"{metric}_precision") + 1/getattr(self, f"{metric}_recall"))
@@ -779,161 +665,110 @@ class DsiEvalResults:
             except (TypeError, ZeroDivisionError):
                 pass
 
-def normalize_exact_match_value(slot, value):
-    value = value.lower().replace('_', ' ').replace('-','').strip()
-    if value in ('true', 'yes', slot[1]):
-        value = 'true'
-    elif value in ('false', 'no', f'no {slot[1]}', f'not {slot[1]}'):
-        value = 'false'
-    return value
-
 def exact_match_evaluation(
-    golds: dial.Dialogues, 
-    preds: dial.Dialogues,
+    golds: dict[tuple[str, int], dict[str, str]], 
+    preds: dict[tuple[str, int], dict[str, str]],
     value_precision_match_threshold = 0.5,
-) -> DsiEvalResults:
+):
+    """
+    golds and preds are each a mapping of:
+
+    {turn_id -> {slot -> value}}
+    """
     slot_matching = {}
-    assert len(golds) == len(preds)
-    gold_slot_counts = defaultdict(int)
-    pred_slot_counts = defaultdict(int)
-    pred_schema = preds[-1].schema
-    overlap_counts = defaultdict(lambda: defaultdict(int))
-    for gdial, pdial in zip(golds, preds):
-        assert len(gdial.states) == len(pdial.states) 
-        gslotvalues = set()
-        pslotvalues = set()
-        for gstate, pstate in zip(gdial.updates(), pdial.updates()):
-            for slot, value in gstate.items():
-                gslotvalues.add((slot, normalize_exact_match_value(slot, value)))
-            for slot, value in pstate.items():
-                if slot in pred_schema:
-                    pslotvalues.add((slot, normalize_exact_match_value(slot, value)))
-        for gslot, _ in gslotvalues:
-            gold_slot_counts[gslot] += 1
-        for pslot, _ in pslotvalues:
-            pred_slot_counts[pslot] += 1
-        for pslot, pvalue in pslotvalues:
-            for gslot, gvalue in gslotvalues:
-                if pvalue == gvalue or gvalue.isalpha() and (pvalue.startswith(gvalue) or pvalue.endswith(gvalue)):
-                    overlap_counts[pslot][gslot] += 1
-    for pslot, count in pred_slot_counts.items():
-        goverlaps = overlap_counts[pslot]
-        if goverlaps:
-            best_match = max(goverlaps, key=goverlaps.get)
-            overlap = goverlaps[best_match]
-            if overlap / count > value_precision_match_threshold:
-                slot_matching[pslot] = best_match
-    savable_slot_matching = {', '.join(k): ', '.join(v) for k, v in slot_matching.items()}
+    overlap_counts = {} # pred slot, gold slot -> count
+    gold_slot_counts = {}
+    pred_slot_counts = {}
+    for slots in preds.values():
+        for slot in slots:
+            pred_slot_counts[slot] = pred_slot_counts.get(slot, 0) + 1
+    for turn_id, gold_slot_values in golds.items():
+        pred_slot_values = preds[turn_id]
+        for gold_slot, gold_value in gold_slot_values.items():
+            gold_slot_counts[gold_slot] = gold_slot_counts.get(gold_slot, 0) + 1
+            gold_values_needed = gold_value.lower().split('|')
+            for pred_slot, pred_value in pred_slot_values.items():
+                pred_value = pred_value.lower()
+                if all(v in pred_value for v in gold_values_needed):
+                    overlap_counts[pred_slot, gold_slot] = overlap_counts.get((pred_slot, gold_slot), 0) + 1
+    sorted_match_counts = sorted(overlap_counts, key=overlap_counts.get)
+    for pred_slot, gold_slot in sorted_match_counts:
+        precision = overlap_counts[pred_slot, gold_slot] / pred_slot_counts[pred_slot]
+        if pred_slot not in slot_matching and precision >= value_precision_match_threshold:
+            slot_matching[pred_slot] = gold_slot
     try:
         results = DsiEvalResults(
             slot_precision=len(set(slot_matching.values()))/len(pred_slot_counts),
             slot_recall=len(set(slot_matching.values()))/len(gold_slot_counts),
-            value_precision=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(pred_slot_counts[pred] for pred in slot_matching),
-            value_recall=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(gold_slot_counts[gold] for gold in slot_matching.values()),
-            macro_value_precision=sum(overlap_counts[p][g]/pred_slot_counts[p] for p, g in slot_matching.items())/len(slot_matching),
-            macro_value_recall=sum(overlap_counts[p][g]/gold_slot_counts[g] for p, g in slot_matching.items())/len(slot_matching),
-            matching=savable_slot_matching,
-            matcher='exact string')
+            value_precision=sum(overlap_counts[match] for match in slot_matching.items())/sum(pred_slot_counts[pred] for pred in slot_matching),
+            value_recall=sum(overlap_counts[match] for match in slot_matching.items())/sum(gold_slot_counts[gold] for gold in slot_matching.values()),
+            value_identification_precision=sum(overlap_counts.values())/sum(pred_slot_counts.values()),
+            value_identification_recall=sum(overlap_counts.values())/sum(gold_slot_counts.values()))
     except ZeroDivisionError:
-        results = DsiEvalResults(matching=savable_slot_matching, matcher='exact string')
+        results = DsiEvalResults()
     return results
 
 
 def turn_vector_match_evaluation(
-    golds: dial.Dialogues, 
-    preds: dial.Dialogues,
+    golds: dict[tuple[str, int], dict[str, str]], 
+    preds: dict[tuple[str, int], dict[str, str]],
     value_precision_match_threshold = 0.5,
 ) -> DsiEvalResults:
+    """
+    golds and preds are each a mapping of:
+
+    {turn_id -> {slot -> value}}
+    """
     slot_matching = {}
-    gold_slot_vectors = {s: [] for d in golds for s in d.schema}
-    pred_slot_vectors = {s: [] for d in preds for s in d.schema}
-    i = 0
-    assert len(golds) == len(preds)
-    for g_dial, p_dial in zip(golds, preds):
-        assert len(g_dial.states) == len(p_dial.states) 
-        for g_state, p_state in zip(g_dial.updates(), p_dial.updates()):
-            for gold_slot, gold_vec in gold_slot_vectors.items():
-                gold_vec.append(gold_slot in g_state)
-            for pred_slot, pred_vec in pred_slot_vectors.items():
-                pred_vec.append(pred_slot in p_state)
-            i += 1
-    gold_slot_counts = {slot: sum(vec) for slot, vec in gold_slot_vectors.items()}
-    pred_slot_counts = {slot: sum(vec) for slot, vec in pred_slot_vectors.items()}
-    overlap_counts = defaultdict(lambda: defaultdict(int))
-    for pslot, pvec in pred_slot_vectors.items():
-        best_match, max_overlap = None, -1
-        for gslot, gvec in gold_slot_vectors.items():
-            overlap = sum(g is True and p is True for g, p in zip(gvec, pvec))
-            overlap_counts[pslot][gslot] = overlap
-            if overlap > max_overlap: 
-                best_match = gslot 
-                max_overlap = overlap
-        match_precision = max_overlap / pred_slot_counts[pslot] if pred_slot_counts[pslot] else 0.0
-        if match_precision >= value_precision_match_threshold:
-            slot_matching[pslot] = best_match
-    savable_slot_matching = {', '.join(k): ', '.join(v) for k, v in slot_matching.items()}
+    overlap_counts = {} # pred slot, gold slot -> count
+    gold_slot_counts = {}
+    pred_slot_counts = {}
+    for slots in preds.values():
+        for slot in slots:
+            pred_slot_counts[slot] = pred_slot_counts.get(slot, 0) + 1
+    for turn_id, gold_slot_values in golds.items():
+        pred_slot_values = preds[turn_id]
+        for gold_slot, gold_value in gold_slot_values.items():
+            gold_slot_counts[gold_slot] = gold_slot_counts.get(gold_slot, 0) + 1
+            gold_values_needed = gold_value.lower().split('|')
+            for pred_slot, pred_value in pred_slot_values.items():
+                pred_value = pred_value.lower()
+                if all(v in pred_value for v in gold_values_needed):
+                    overlap_counts[pred_slot, gold_slot] = overlap_counts.get((pred_slot, gold_slot), 0) + 1
+    sorted_match_counts = sorted(overlap_counts, key=overlap_counts.get)
+    for pred_slot, gold_slot in sorted_match_counts:
+        precision = overlap_counts[pred_slot, gold_slot] / pred_slot_counts[pred_slot]
+        if pred_slot not in slot_matching and precision >= value_precision_match_threshold:
+            slot_matching[pred_slot] = gold_slot
     try:
         results = DsiEvalResults(
             slot_precision=len(set(slot_matching.values()))/len(pred_slot_counts),
             slot_recall=len(set(slot_matching.values()))/len(gold_slot_counts),
-            value_precision=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(pred_slot_counts[pred] for pred in slot_matching),
-            value_recall=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(gold_slot_counts[gold] for gold in slot_matching.values()),
-            macro_value_precision=sum(overlap_counts[p][g]/pred_slot_counts[p] for p, g in slot_matching.items())/len(slot_matching),
-            macro_value_recall=sum(overlap_counts[p][g]/gold_slot_counts[g] for p, g in slot_matching.items())/len(slot_matching),
-            matching=savable_slot_matching,
-            matcher='turn vector')
+            value_precision=sum(overlap_counts[match] for match in slot_matching.items())/sum(pred_slot_counts[pred] for pred in slot_matching),
+            value_recall=sum(overlap_counts[match] for match in slot_matching.items())/sum(gold_slot_counts[gold] for gold in slot_matching.values()),
+            value_identification_precision=sum(overlap_counts.values())/sum(pred_slot_counts.values()),
+            value_identification_recall=sum(overlap_counts.values())/sum(gold_slot_counts.values()))
     except ZeroDivisionError:
-        results = DsiEvalResults(matching=savable_slot_matching, matcher='turn vector')
+        results = DsiEvalResults()
     return results
 
-
-def calculate_metrics(
-    predictions_path: str|Path,
-    golds: dial.Dialogues,
-):
-    expath = Path(predictions_path).parent
-    preds = dial.Dialogues.load(predictions_path)
-    exact_match = exact_match_evaluation(golds, preds)
-    turn_vector = turn_vector_match_evaluation(golds, preds)
-    exact_match_json = json.dumps(vars(exact_match), indent=2)
-    (expath/'exact_match_eval.json').write_text(exact_match_json)
-    (expath/'turn_vector_eval.json').write_text(json.dumps(vars(turn_vector), indent=2))
-    print(exact_match_json)
-    return exact_match, turn_vector
 
 
 import socket as sk
 
-def get_new_ex_name():
+def launch(experiment_config: DsiExperiment):
     experiments_path = pl.Path('ex')
     existing_experiment_names = {
         ''.join(path.name.split('_')[:-1]) for path in experiments_path.iterdir()}
-    experiment_name = ez.denominate(
-        existing_names=existing_experiment_names) + '_' + sk.gethostname()[:4]
-    return experiment_name
-
-def launch(experiment: DsiExperiment):
-    experiments_path = pl.Path('ex')
-    existing_experiment_names = {
-        ''.join(path.name.split('_')[:-1]) for path in experiments_path.iterdir()}
-    experiment.experiment_name = ez.denominate(
+    experiment_config.experiment_name = ez.denominate(
         existing_names=existing_experiment_names) + '_' + sk.gethostname()[:4]
     (pl.Path('ex')/experiment.experiment_name).mkdir(exist_ok=False)
     (pl.Path('ex')/experiment.experiment_name/'launch.json').write_text(json.dumps({
-        f.name: getattr(experiment, f.name)
-        for f in dc.fields(experiment)})) # noqa
+        f.name: getattr(experiment_config, f.name)
+        for f in dc.fields(experiment_config)})) # noqa
     exn = experiment.experiment_name
     os.system(f'sbatch --job-name={exn} --output=ex/{exn}/out.txt launch.sh {exn}')
     print(f'Submitted {exn}')
-
-def nvidia_smi():
-    print('NVIDIA-SMI')
-    for i in range(8):
-        try:
-            available, total = pt.cuda.mem_get_info(i)
-            print(i, (total-available)/1e9, 'GB used')
-        except Exception:
-            print(i, 'error')
 
 
 
@@ -959,17 +794,23 @@ if __name__ == '__main__':
 
     ####### FOR DEBUG  :D ######################################################################
 
+    def nvidia_smi():
+        print('NVIDIA-SMI')
+        for i in range(8):
+            try:
+                available, total = pt.cuda.mem_get_info(i)
+                print(i, (total-available)/1e9, 'GB used')
+            except Exception:
+                print(i, 'error')
+
     training_experiment = DsiExperiment(
         **projdict,
-        # model_to_load='meta-llama/Llama-3.2-1B-Instruct',
-        # base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
-        # physical_batch_size=4,
-        model_to_load='meta-llama/Llama-3.2-3B-Instruct',
-        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
-        physical_batch_size=2,
-        # model_to_load='meta-llama/Llama-3.1-8B-Instruct',
-        # base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        # physical_batch_size=1,
+        model_to_load='meta-llama/Llama-3.2-1B-Instruct',
+        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        physical_batch_size=4,
+        # model_to_load='meta-llama/Llama-3.2-3B-Instruct',
+        # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
+        # physical_batch_size=2,
         quantization='nf4dq',
         max_seq_len=2048,
         max_new_tokens=1024,
@@ -977,85 +818,60 @@ if __name__ == '__main__':
         new_lora_rank=1,
         epochs=1,
         batch_size=8,
-        steps_to_validate_on=(100, 200, 500, 1000, 2000, 4000, 7000, 10000),
+        steps_to_validate_on=(25, 50, 75, 100, 150, 200, 250)
+            + tuple(range(300, 1000, 100)) + tuple(range(1000, 300000, 300)),
         warmup=100,
         learning_rate=1e-4,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
         decoding_batch_size=4,
-        downsample_eval_dialogues=10,
+        downsample_eval_dialogues=5,
         state_mode='updates',
-        schema_mode='schemaless',
-        infer_independently_per_dialogue = False,
-        infer_independently_per_turn = False,
-        infer_full_dialogue_schema_first = True,
-        infer_bad_slots_by_tracked_counts=True,
-        infer_bad_slots_by_min_count_per_dialogue_window=(2,10),
-        max_schema_size=100,
+        schema_mode='schema',
         # train_data_path='data/d0t/dot_2',
-        # train_data_path='data/sgd/train',
-        train_data_path='data/d0t',        
+        train_data_path='data/sgd/train',
+        # train_data_path='data/d0t',        
         train_num_turn_level_seqs_per_dialogue=1,
         train_max_imported_schemata=3,
         train_percent_empty_schema=0.2,
         train_percent_full_schema=0.2,
         rng_seed=None,
-        tag="rerng"
+        tag="rerng DSI updates"
     )
 
     if Path(training_experiment.train_data_path).name == 'd0t':
         assert training_experiment.state_mode == 'updates'
         assert training_experiment.schema_mode == 'schemaless'
 
+    # launch(training_experiment)
+    # experiment.run()
 
     evaluation_experiment = DsiExperiment(
-        experiment_name='J',
         **projdict,
-        load_finetuned_lora=True,
-        # model_to_load='ex/MajesticMygeeto_tebu/10000',
-        # model_to_load='ex/FieryNalHutta_tebu/10000',
-        # base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
-        # model_to_load='ex/RogueKefBir_tebu/10000',
-        # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
-        model_to_load="ex/ResplendentKit_tebu/10000",
-        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
+        decoding_batch_size=1, #MODSF
+        load_finetuned_lora=True, #MODSF
+        rng_seed=42, #MODSF
+        model_to_load='ex/MajesticMygeeto_tebu/9700',
+        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
         # model_to_load='ex/RogueKefBir_tebu/6100',
         # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
-        # downsample_eval_dialogues=3,
+        # physical_batch_size=2,
+        downsample_eval_dialogues=3,
         quantization='nf4dq',
         max_seq_len=2048,
         max_new_tokens=1024,
-        device='cuda:1',
+        device='cuda:6',
         new_lora_rank=None,
         epochs=0,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
-        decoding_batch_size=4,
         state_mode='states',
         schema_mode='schema',
-        infer_independently_per_dialogue = True,
-        infer_independently_per_turn = False,
-        infer_full_dialogue_schema_first = True,
-        infer_bad_slots_by_tracked_counts=True,
-        infer_bad_slots_by_min_count_per_dialogue_window=(2, 10),
-        max_schema_size=100,
-        downsample_eval_dialogues=None,
-        rng_seed=None,
         tag="eval"
     )
 
     nvidia_smi()
-
-    # evaluation_experiment.run()
-    # launch(evaluation_experiment)
-
-    # launch(training_experiment)
-    # training_experiment.run()
-
-    # calculate_metrics(
-    #     'ex/DashingZuckuss_tebu/0/dsi_dial_states.json',
-    #     dial.multiwoz_to_dialogues('data/multiwoz24/dev_dials.json')
-    # )
+    evaluation_experiment.run()
     
 
     

@@ -718,10 +718,11 @@ def gen_search_dial_main(
                 continue
 
 if __name__ == '__main__':
+    print('Starting Generation!')
     gen_search_dial_main(
         n_tasks=2,
         n_schemas_per_task=1,
-        n_dials_per_schema=30,
+        n_dials_per_schema=15,
         force_tasks=(
             "A college student is getting help from an advisor to look for a major, then a course, then a section that fits their schedule.",
             "A soccer coach is getting help from a coaching assistant to look for a formation for the upcoming match, then a position for the star player.",

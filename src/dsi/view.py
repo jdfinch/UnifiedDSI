@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import ezpyzy as ez
 import dsi.dialogue as dial
+import random as rng
 
 
 def view_predictions(experiment_folders):
@@ -29,13 +30,7 @@ def view_predictions(experiment_folders):
         print('='*50, '\n\n')
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    view_predictions((
-        # 'ex/CaptivatingGeneral_tebu',
-        # 'ex/SpiritedKuiil_tebu',
-        # 'ex/DauntlessEwok_tebu',
-        'ex/MysticalMirial_tebu/10000',
-    ))
-=======
-    ...
->>>>>>> 603f032ab5bd849d10ae658b8d82b9f1ef12594b
+
+    predictions = dial.Dialogues.load('ex/CaptivatingReek_tebu/0/dsi_update_stream_states.json')
+    example = rng.choice(predictions)
+    example.display_state_updates()
