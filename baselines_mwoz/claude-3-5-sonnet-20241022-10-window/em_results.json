@@ -1,0 +1,31 @@
+{
+  "slot_precision": 0.85,
+  "slot_recall": 0.5862068965517241,
+  "slot_f1": 0.693877551020408,
+  "value_precision": 0.9418604651162791,
+  "value_recall": 0.9418604651162791,
+  "value_f1": 0.9418604651162791,
+  "macro_value_precision": 0.9425770308123248,
+  "macro_value_recall": 0.9372549019607842,
+  "macro_value_f1": 0.9399084324535952,
+  "matching": {
+    "train, departure_station": "train, departure",
+    "train, departure_day": "train, day",
+    "train, arrival_station": "train, destination",
+    "hotel, selected_hotel": "hotel, name",
+    "hotel, minimum_stars": "hotel, stars",
+    "accommodation, accommodation_type": "hotel, type",
+    "hotel, length_of_stay": "hotel, book stay",
+    "hotel, number_of_guests": "hotel, book people",
+    "train, arrival_time_before": "train, arriveby",
+    "hotel, check_in_day": "hotel, book day",
+    "restaurant, cuisine_type": "restaurant, food",
+    "restaurant, requested_day": "restaurant, book day",
+    "restaurant, requested_time": "restaurant, book time",
+    "restaurant, requested_restaurant": "restaurant, name",
+    "restaurant, number_of_diners": "restaurant, book people",
+    "hotel, price_range": "hotel, pricerange",
+    "restaurant, price_range": "restaurant, pricerange"
+  },
+  "matcher": "exact string"
+}

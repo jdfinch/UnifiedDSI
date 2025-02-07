@@ -175,7 +175,7 @@ class DsiExperiment:
         if 'woz' in self.eval_data_path:
             evaluation_data: dial.Dialogues = dial.multiwoz_to_dialogues(self.eval_data_path)
         else:
-            raise NotImplementedError
+            evaluation_data: dial.Dialogues = dial.dot2_to_dialogues(self.eval_data_path)
         if self.downsample_eval_dialogues:
             evaluation_data = evaluation_data.downsample(self.downsample_eval_dialogues)
         gold_data = cp.deepcopy(evaluation_data)
@@ -780,7 +780,7 @@ class DsiEvalResults:
                 pass
 
 def normalize_exact_match_value(slot, value):
-    value = value.lower().replace('_', ' ').replace('-','').strip()
+    value = str(value).lower().replace('_', ' ').replace('-','').strip()
     if value in ('true', 'yes', slot[1]):
         value = 'true'
     elif value in ('false', 'no', f'no {slot[1]}', f'not {slot[1]}'):
@@ -1008,45 +1008,88 @@ if __name__ == '__main__':
         assert training_experiment.schema_mode == 'schemaless'
 
 
-    evaluation_experiment = DsiExperiment(
-        experiment_name='J',
-        **projdict,
-        load_finetuned_lora=True,
-        # model_to_load='ex/MajesticMygeeto_tebu/10000',
-        # model_to_load='ex/FieryNalHutta_tebu/10000',
-        # base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
-        # model_to_load='ex/RogueKefBir_tebu/10000',
-        # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
-        model_to_load="ex/ResplendentKit_tebu/10000",
-        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        # model_to_load='ex/RogueKefBir_tebu/6100',
-        # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
-        # downsample_eval_dialogues=3,
-        quantization='nf4dq',
-        max_seq_len=2048,
-        max_new_tokens=1024,
-        device='cuda:1',
-        new_lora_rank=None,
-        epochs=0,
-        decoding_repetition_penalty=1.2,
-        decoding_beams=1,
-        decoding_batch_size=4,
+    mode_ds = dict(
+        state_mode='states',
+        schema_mode='schema',
+        infer_independently_per_dialogue = False,
+        infer_independently_per_turn = False,
+        infer_full_dialogue_schema_first = True,
+    )
+    mode_ss = dict(
+        state_mode='states',
+        schema_mode='schema',
+        infer_independently_per_dialogue = False,
+        infer_independently_per_turn = False,
+        infer_full_dialogue_schema_first = False,
+    )
+    mode_dc = dict(
         state_mode='states',
         schema_mode='schema',
         infer_independently_per_dialogue = True,
         infer_independently_per_turn = False,
         infer_full_dialogue_schema_first = True,
-        infer_bad_slots_by_tracked_counts=True,
-        infer_bad_slots_by_min_count_per_dialogue_window=(2, 10),
+    )
+    mode_us = dict(
+        state_mode='updates',
+        schema_mode='schema',
+        infer_independently_per_dialogue = False,
+        infer_independently_per_turn = False,
+        infer_full_dialogue_schema_first = False,
+    )
+    mode_uc = dict(
+        state_mode='updates',
+        schema_mode='schemaless',
+        infer_independently_per_dialogue = True,
+        infer_independently_per_turn = True,
+        infer_full_dialogue_schema_first = False,
+    )
+
+    # streaming update with SGD with no window (8b, 100)
+    # streaming update with Dots with no window (8b, 100)
+
+
+
+    # nohup python -u src/dsi/dsi2.py > ex/3B_LY_3.out 2>&1 &
+
+    # -utdial-25
+    # -nowindow
+
+    # nohup python -u src/dsi/dsi2.py > ex/8B_ET-us-utdial-25-nowindow.out 2>&1 &
+
+    evaluation_experiment = DsiExperiment(
+        experiment_name='ET_us_utdial_25-nowindow',
+        model_to_load="ex/ExoticTeth_tebu/1000",
+        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
+        **mode_us,
+        downsample_eval_dialogues=None,       # 3, 10, 30, 100, None
+        
+        infer_bad_slots_by_tracked_counts=False,
+        infer_bad_slots_by_min_count_per_dialogue_window=None,
+
+        eval_data_path='data/utdial',
+
+        device='cuda:0',
+
+
+        **projdict,
+        load_finetuned_lora=True,
+        quantization='nf4dq',
+        max_seq_len=2048,
+        max_new_tokens=1024,
+        new_lora_rank=None,
+        epochs=0,
+        decoding_repetition_penalty=1.2,
+        decoding_beams=1,
+        decoding_batch_size=4,
+
         max_schema_size=100,
-        downsample_eval_dialogues=None,
         rng_seed=None,
         tag="eval"
     )
 
     nvidia_smi()
 
-    # evaluation_experiment.run()
+    evaluation_experiment.run()
     # launch(evaluation_experiment)
 
     # launch(training_experiment)

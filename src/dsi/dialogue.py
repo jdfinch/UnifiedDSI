@@ -118,7 +118,7 @@ class Dialogue:
                 new_state = self.states[i // 2]
                 updates = {k: v for k, v in new_state.items() if k not in previous_state or previous_state[k] != v}
                 if updates:
-                    print(ansi.foreground_blue,
+                    print(ansi.foreground_lightpurple,
                         f"    {', '.join(' '.join(k)+'='+str(v) for k, v in updates.items())}",
                     ansi.reset, sep='')
                 previous_state = new_state.copy()
@@ -148,8 +148,10 @@ class Dialogue:
 
     def display_final_schema(self):
         """Displays the final schema with descriptions (one line per slot, only non-empty slots)"""
+        print(ansi.foreground_blue, end='')
         for (domain, slot), (desc, _) in self.schema.items():
             print(f"{domain}, {slot}: {desc}") 
+        print(ansi.reset, end='')
 
 
 class Dialogues(list[Dialogue]):
@@ -254,6 +256,7 @@ def dot2_to_dialogues(dot_path: str) -> Dialogues:
         for dialogue_path in task_path.iterdir():
             dialogue_path: Path
             if dialogue_path.name == 'schema.json' or not dialogue_path.is_file(): continue
+            if 'DS_Store' in dialogue_path.name: continue
             dialogue = Dialogue(id='/'.join(dialogue_path.parts[:-2]).removesuffix('.json'), schema=schema)
             dialogue_json = json.loads(dialogue_path.read_text())
             state = dict.fromkeys(dialogue.schema)
@@ -478,6 +481,75 @@ def dot1_to_dialogues(dot_path: str) -> Dialogues:
     return dialogues
     
 
+# import ast
+# import json
+# from pathlib import Path
+
+def extract_variable_docstrings(code: str) -> dict[str, str]:
+    """
+    Extracts the docstring associated with each variable in a dataclass.
+
+    :param code: The source code string of the dataclass.
+    :return: A dictionary mapping variable names to their docstrings.
+    """
+    tree = ast.parse(code)
+    variable_docs = {}
+    
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):  # Find class definitions
+            prev_docstring = None
+            prev_var_name = None
+            
+            for stmt in node.body[1:]: # the first element is always the class docstring
+                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                    var_name = stmt.target.id
+                    if prev_docstring:
+                        variable_docs[var_name] = prev_docstring
+                        prev_docstring = None  # Reset after assignment
+                        prev_var_name = None 
+                    else:
+                        prev_var_name = var_name  # Store the last seen variable
+
+                elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                    docstring = stmt.value.value.strip()
+                    if prev_var_name:
+                        variable_docs[prev_var_name] = docstring  # Docstring follows variable
+                        prev_var_name = None  # Reset after assignment
+                        prev_docstring = None
+                    else:
+                        prev_docstring = docstring  # Docstring before variable
+
+    return variable_docs
+
+def reparse_descriptions(data_dir):
+    PRINT = False
+    for scenario_dir in data_dir.iterdir():
+        if scenario_dir.is_dir():
+            print(scenario_dir.name)
+            try:
+                schema_ls = json.load(open(scenario_dir / "schema.json"))
+                for schema in schema_ls:
+                    for schema_type in ["searcher_schema_code", "recommender_schema_code"]:
+                        code = schema[schema_type].strip()[9:-3]
+                        parsed_schema = extract_variable_docstrings(code)
+                        if PRINT:
+                            print()
+                            print('#'*50)
+                            print(code)
+                        extracted_schema = schema_type[:-5]
+                        for item in schema[extracted_schema]:
+                            schema[extracted_schema][item]['desc'] = parsed_schema[item]
+                        if PRINT:
+                            print(json.dumps(schema[extracted_schema], indent=2))
+                            print('#'*50)
+                            print()
+                json.dump(schema_ls, open(scenario_dir / "schema.json", 'w'), indent=2)
+            except Exception as e:
+                print(e)
+
+
+    
+
 
 if __name__ == '__main__':
 
@@ -492,7 +564,17 @@ if __name__ == '__main__':
 
     # sgd_valid = sgd_to_dialogues('data/sgd/train')
 
-    predictions = Dialogues.load('ex/DashingZuckuss_tebu/0/dsi_dial_schema_stream.json')
-    example = rng.choice(predictions)
-    example.display_final_schema()
+    # predictions = Dialogues.load('ex/DashingZuckuss_tebu/0/dsi_dial_schema_stream.json')
+    # example = rng.choice(predictions)
+    # example.display_final_schema()
+
+    # data_dir = Path('data') / 'utdial'
+    # reparse_descriptions(data_dir)
+
+    utdial: Dialogues = dot2_to_dialogues('data/utdial')
+    for dialogue in utdial:
+        dialogue.display_state_updates()
+        print()
+        print('-'*40)
+        print()
 

@@ -6,8 +6,13 @@ import json, csv
 import atexit as ae
 import functools as ft
 import dsi.dialogue as dial
+from dsi.dsi2 import turn_vector_match_evaluation, exact_match_evaluation
 import re
+import copy as cp
 from pathlib import Path
+from tqdm import tqdm
+import random
+random.seed(42)
 
 LLM = 'claude-3-5-sonnet-20241022'
 
@@ -20,7 +25,7 @@ cache_sep = '\n----------------------------------------------------\n'
 cache: dict[str, str]
 cache_file = pl.Path(f'data/{LLM}/gen.txt')
 if cache_file.exists():
-    cache_items = list(reversed(cache_file.read_text().split(cache_sep)))
+    cache_items = list(cache_file.read_text().split(cache_sep))
     cache = dict(zip(cache_items[0::2], cache_items[1::2]))
 else:
     cache = {}
@@ -32,7 +37,7 @@ def save_cache(cachemax=1000):
 def dedent(s):
     return tw.dedent(s.strip())
 
-# ae.register(save_cache) --> don't know if we need a cache? it throws an error if the file doesn't already exist if this is commented in
+ae.register(save_cache)
 
 ########################################################
 # GPT
@@ -49,6 +54,9 @@ assistant = lambda text: dict(role='assistant', content=dedent(text))
 def gpt(messages: list, model="gpt-4o-mini", temperature=0.0):
     promptkey = model+' '+str(temperature)+'----\n' + '\n\n'.join(x['content'] for x in messages)
     if promptkey in cache:
+        print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print("<<<<<<<<<<<<<<<<<<<<<<<<<< CACHE GRAB >>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
         cache[promptkey] = cache.pop(promptkey)
         return cache[promptkey]
     completion = openai_api.chat.completions.create(
@@ -75,6 +83,9 @@ assistant = lambda text: dict(role='assistant', content=dedent(text))
 def anthropic(messages: list, model="claude-3-5-sonnet-20241022", temperature=0.0):
     promptkey = model+' '+str(temperature)+'----\n' + '\n\n'.join(x['content'] for x in messages)
     if promptkey in cache:
+        print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print("<<<<<<<<<<<<<<<<<<<<<<<<<< CACHE GRAB >>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        print("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
         cache[promptkey] = cache.pop(promptkey)
         return cache[promptkey]
     message = claude_api.messages.create(
@@ -148,50 +159,191 @@ def get_discovered_slots(prompt):
     return generated
 
 
-pattern = re.compile(r"\* \[(.+)\] (.+) \(([^)]+)\): (.+)")
+pattern = re.compile(r"\* (?:\[[^\[\]]+\])?\[([^\[\]]+)\] (.+) \(([^)]+)\): (.+)", re.MULTILINE)
 
-# Load MultiWoz Dialogues
-evaluation_data: dial.Dialogues = dial.multiwoz_to_dialogues('data/multiwoz24/dev_dials.json')
-running_schema = {}
-for dialogue in evaluation_data[:6]:
-    dialogue.states = []
-    turn_strings = [f"{speaker}: {turn}" for speaker, turn in zip(it.cycle(['User', 'System']),dialogue.turns)]
-    dialogue_string = '\n'.join(turn_strings)
-    slots_string = '\n'.join([f"* [{k[0]}] {k[1]} ({v})" for k,v in running_schema.items()])
-    prompt = prompt_predict_state.format(
-        dialogue=dialogue_string,
-        existing_slots=slots_string
-    )
-    generated = get_discovered_slots(prompt=prompt)
-    print(generated)
-    print()
-    matches = pattern.findall(generated, re.MULTILINE)
-    final_state = {}
-    for domain, slot, description, value in matches:
-        slot = domain, slot
-        print(f"{slot} ({description}): {value}")
-        final_state[slot] = value
-        if slot not in running_schema:
-            print("\tNEW!")
-            running_schema[slot] = (description, [])
-    dialogue.states = [{}]*int(len(dialogue.turns) / 2)
-    dialogue.states[-1] = final_state
-    dialogue.schema = {k:v for k,v in running_schema.items()} # todo - is .schema supposed to be the schema resulting from this dialogue? or the one it receives during inference time?
-    print()
-    print('-'*40)
-    print()
+# Load evaluation Dialogues 
+datatype = 'utdial'
+if datatype == 'utdial':
+    datapath = f'data/{datatype}'
+    evaluation_data: dial.Dialogues = dial.dot2_to_dialogues(datapath)
+    gold_data: dial.Dialogues = dial.dot2_to_dialogues(datapath)
+elif datatype == 'mwoz':
+    datapath = 'data/multiwoz24/dev_dials.json'
+    evaluation_data: dial.Dialogues = dial.multiwoz_to_dialogues(datapath)
+    gold_data: dial.Dialogues = dial.multiwoz_to_dialogues(datapath)
 
-save_dir = Path(f'baselines/{LLM}')
+# shuffle them identically, one used to store LLM generations and one for gold data
+zipped_lists = list(zip(evaluation_data, gold_data))
+random.shuffle(zipped_lists)
+evaluation_data, gold_data = zip(*zipped_lists)
+evaluation_data = list(evaluation_data)
+gold_data = list(gold_data)
+ 
+num = len(evaluation_data)
+windowed = True
+window_size = 10
+hit_quota = 2
+
+save_dir = Path(f'baselines_{datatype}')
 save_dir.mkdir(exist_ok=True)
+save_dir = save_dir / f'{LLM}-{num}{"-window" if windowed else ""}'
+save_dir.mkdir(exist_ok=True)
+
+evaluation_data = dial.Dialogues(evaluation_data[:num])
+gold_data = dial.Dialogues(gold_data[:num])
+
+"""
+Basic Claude
+"""
+
+"""
+Windowed Claude
+-> make a defaultdict of lists for windowing
+-> for each turn generation, for each discovered slot, register these slots in the windowing dict
+-> at the end of the dialogue, 
+    iterate over every slot in the window dict
+        if the slot is in any of the turn-level dialogue states for that dialogue, then add a 1 otherwise a 0
+    iterate over every slot in the window dict
+        if the size of the list is >= window_size, check if the sum of the list is >= quota
+            if < quota, then delete the slot from the window dict and delete it from the schema
+-> at the very end of everything,
+    iterate over windowing dict
+        if size of list < window_size, then delete the slot from the schema
+
+-> now do it again but with the final schema (ignoring all discoveries)
+"""
+
+running_schema = {}
+windowing_dict = {}
+for dialogue in tqdm(evaluation_data, desc='LLM Discovering'):
+    dialogue.states = []
+    for turn_idx in range(1, len(dialogue.turns)+1, 2):
+        turn_strings = [f"{speaker}: {turn}" for speaker, turn in zip(it.cycle(['User', 'System']), dialogue.turns[:turn_idx])]
+        dialogue_string = '\n'.join(turn_strings)
+        slot_strings = []
+        for d, rsdict in running_schema.items():
+            slot_strings.append(f'# {d}')
+            for k,v in rsdict.items():
+                slot_strings.append(f"* [{d}] {k} ({v[0]})")
+            slot_strings.append("")
+        slots_string = '\n'.join(slot_strings)
+        prompt = prompt_predict_state.format(
+            dialogue=dialogue_string,
+            existing_slots=slots_string
+        )
+        generated = get_discovered_slots(prompt=prompt)
+        print(prompt)
+        print()
+        print('=====>>> ')
+        print()
+        print(generated)
+        print()
+        matches = pattern.findall(generated)
+        final_state = {}
+        for domain, slot, description, value in matches:
+            print(f"[{domain}] {slot} ({description}): {value}")
+            final_state[domain, slot] = value
+            if domain not in running_schema:
+                running_schema[domain] = {}
+            if slot not in running_schema[domain]:
+                print("\tNEW!")
+                running_schema[domain][slot] = (description, [])
+                windowing_dict[domain, slot] = []
+        print()
+        print('-'*40)
+        print()
+        dialogue.states.append(final_state)
+    if windowed:
+        for slot in windowing_dict:
+            hit_slot = False
+            for state in dialogue.states:
+                if slot in state:
+                    hit_slot = True
+                    break
+            windowing_dict[slot].append(1 if hit_slot else 0)
+        for slot, hits in list(windowing_dict.items()):
+            if len(hits) >= window_size and sum(hits[-window_size:]) < hit_quota:
+                del windowing_dict[slot]
+                del running_schema[slot[0]][slot[1]]
+                if len(running_schema[slot[0]]) == 0:
+                    del running_schema[slot[0]]
+    dialogue.schema = {}
+    for domain, d in running_schema.items():
+        for slot, definition in d.items():
+            dialogue.schema[domain, slot] = definition
+
+if windowed:
+    for slot, hits in list(windowing_dict.items()):
+        if len(hits) < window_size:
+            del running_schema[slot[0]][slot[1]]
+            if len(running_schema[slot[0]]) == 0:
+                del running_schema[slot[0]]
+    evaluation_data[-1].schema = {}
+    for domain, d in running_schema.items():
+        for slot, definition in d.items():
+            dialogue.schema[domain, slot] = definition
+
+evaluation_data.save(save_dir/'streaming_dialogue_discovered.json')
+
+if windowed:
+    # RUN IT ALL AGAIN USING THIS FINAL SCHEMA
+    for dialogue in tqdm(evaluation_data, desc='LLM Tracking'):
+        dialogue.states = []
+        for turn_idx in range(1, len(dialogue.turns)+1, 2):
+            turn_strings = [f"{speaker}: {turn}" for speaker, turn in zip(it.cycle(['User', 'System']), dialogue.turns[:turn_idx])]
+            dialogue_string = '\n'.join(turn_strings)
+            slot_strings = []
+            for d, rsdict in running_schema.items():
+                slot_strings.append(f'# {d}')
+                for k,v in rsdict.items():
+                    slot_strings.append(f"* [{d}] {k} ({v[0]})")
+                slot_strings.append("")
+            slots_string = '\n'.join(slot_strings)
+            prompt = prompt_predict_state.format(
+                dialogue=dialogue_string,
+                existing_slots=slots_string
+            )
+            generated = get_discovered_slots(prompt=prompt)
+            print(prompt)
+            print()
+            print('=====>>> ')
+            print()
+            print(generated)
+            print()
+            matches = pattern.findall(generated)
+            final_state = {}
+            for domain, slot, description, value in matches:
+                print(f"[{domain}] {slot} ({description}): {value}")
+                if domain in running_schema and slot in running_schema[domain]:
+                    final_state[domain, slot] = value
+                    print('\tTRACKED!')
+            print()
+            print('-'*40)
+            print()
+            dialogue.states.append(final_state)
+        dialogue.schema = {}
+        for domain, d in running_schema.items():
+            for slot, definition in d.items():
+                dialogue.schema[domain, slot] = definition
+
+        
+
+    
 evaluation_data.save(save_dir/'streaming_dialogue_predictions.json')
 
 
+for pred_dial, gold_dial in zip(evaluation_data, gold_data):
+    assert pred_dial.id == gold_dial.id
+    assert len(pred_dial.states) == len(gold_dial.states)
+for dialogue in evaluation_data:
+    dialogue.display_state_updates()
+    print('-'*100)
+tvresults = turn_vector_match_evaluation(gold_data, evaluation_data)
+emresults = exact_match_evaluation(gold_data, evaluation_data)
+tvresults_json = json.dumps(vars(tvresults), indent=2)
+emresults_json = json.dumps(vars(emresults), indent=2)
+print('===== Results =====')
+print(emresults_json)
+(save_dir/'results.json').write_text(tvresults_json)
+(save_dir/'em_results.json').write_text(emresults_json)
 
-
-
-# iterate over dialogues
-# 1st dialogue - empty schema
-# following dialogues - schema is updated from previous iterations
-# run on dialogue
-# collect schema additions from outputs
-# 

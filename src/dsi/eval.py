@@ -40,10 +40,10 @@ def run_experiment(
             f.name: getattr(experiment, f.name) for f in dc.fields(experiment)},
             indent=2
         ))
-        # experiment.run()
-        # del experiment.model
-        # gc.collect()
-        # pt.cuda.empty_cache()
+        experiment.run()
+        del experiment.model
+        gc.collect()
+        pt.cuda.empty_cache()
     log.close()
 
 
@@ -69,7 +69,7 @@ template = DsiExperiment(
     quantization='nf4dq',
     max_seq_len=2048,
     max_new_tokens=1024,
-    device='cuda:0',
+    device='cuda',
     new_lora_rank=None,
     epochs=0,
     decoding_repetition_penalty=1.2,
@@ -132,19 +132,63 @@ def modes(ex, *modes):
     return exs
 
 
-mm = cp.copy(template)
-mm.model_to_load = 'ex/MajesticMygeeto_tebu/10000'
-mm.base_model_repo_id = 'meta-llama/Llama-3.2-1B-Instruct'
-mm.downsample_eval_dialogues = [30, 100]
-mms = modes(mm, 'dc', 'ds', 'ss')
+######
+# 1B
+######
 
-rt = cp.copy(template)
-rt.model_to_load = 'ex/'
-rt.base_model_repo_id = 'meta-llama/Llama-3.2-1B-Instruct'
-rts = modes(rt, 'dc', 'ds', 'ss')
+# mm = cp.copy(template)
+# mm.model_to_load = 'ex/MajesticMygeeto_tebu/10000'
+# mm.base_model_repo_id = 'meta-llama/Llama-3.2-1B-Instruct'
+# mm.downsample_eval_dialogues = [30, 100]
+# mms = modes(mm, 'dc', 'ds', 'ss')
+
+# rt = cp.copy(template)
+# rt.model_to_load = 'ex/ResilientThyferra_tebu/1000'
+# rt.base_model_repo_id = 'meta-llama/Llama-3.2-1B-Instruct'
+# rts = modes(rt, 'dc', 'ds', 'ss')
+
+# fn = cp.copy(template)
+# fn.model_to_load = 'ex/FieryNalHutta_tebu/10000'
+# fn.base_model_repo_id = 'meta-llama/Llama-3.2-1B-Instruct'
+# fns = modes(fn, 'uc', 'us')
+
+# fs = cp.copy(template)
+# fs.model_to_load = 'ex/FierceSaw_tebu/10000'
+# fs.base_model_repo_id = 'meta-llama/Llama-3.2-1B-Instruct'
+# fss = modes(fs, 'uc')
+
+######
+# 3B
+######
+
+# mm = cp.copy(template)
+# mm.model_to_load = 'ex/RogueKefBir_tebu/10000'
+# mm.base_model_repo_id = 'meta-llama/Llama-3.2-3B-Instruct'
+# mms = modes(mm, 'dc', 'ds', 'ss')
+
+# rt = cp.copy(template)
+# rt.model_to_load = 'ex/LegendaryDarthMaul_tebu/1000'
+# rt.base_model_repo_id = 'meta-llama/Llama-3.2-3B-Instruct'
+# rts = modes(rt, 'dc', 'ds', 'ss')
+
+# fn = cp.copy(template)
+# fn.model_to_load = 'ex/DazzlingAcklay_tebu/10000'
+# fn.base_model_repo_id = 'meta-llama/Llama-3.2-3B-Instruct'
+# fns = modes(fn, 'uc', 'us')
+
+fs = cp.copy(template)
+fs.model_to_load = 'ex/LivelyYoda_tebu/10000'
+fs.base_model_repo_id = 'meta-llama/Llama-3.2-3B-Instruct'
+fss = modes(fs, 'uc')
+
+mms = []
+rts = []
+fns = []
+# fss = []
 
 
-
+# CUDA_VISIBLE_DEVICES=5 nohup python -u src/dsi/eval.py > ex/1B_models.out 2>&1 &
+# CUDA_VISIBLE_DEVICES=1 nohup python -u src/dsi/eval.py > ex/3B_models_1.out 2>&1 &
 
 
 
@@ -153,7 +197,7 @@ if __name__ == '__main__':
     # quit(0)
 
     print('Launching Multiprocessed Experiments...')
-    main(*mms)
+    main(*mms, *rts, *fns, *fss)
 
 
 

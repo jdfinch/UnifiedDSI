@@ -1,0 +1,30 @@
+{
+  "slot_precision": 0.6666666666666666,
+  "slot_recall": 0.15841584158415842,
+  "slot_f1": 0.256,
+  "value_precision": 0.7840909090909091,
+  "value_recall": 0.8846153846153846,
+  "value_f1": 0.8313253012048193,
+  "macro_value_precision": 0.8138888888888889,
+  "macro_value_recall": 0.898809523809524,
+  "macro_value_f1": 0.8542438986716095,
+  "matching": {
+    "art, artistic_style": "Subject Matter, style",
+    "art, surface_preference": "Medium, surface",
+    "art, drying_time_preference": "Medium, drying_time",
+    "art, artwork_size": "Subject Matter, size",
+    "art, selected_artwork": "Subject Matter, name",
+    "art, texture_preference": "Medium, texture",
+    "art, transparency_preference": "Medium, opacity",
+    "venue, venue_requirements": "Venue, amenities",
+    "venue, venue_location": "Venue, location",
+    "venue, selected_venue": "Venue, name",
+    "venue, venue_capacity": "Venue, capacity",
+    "sports, formation_type": "Formation, name",
+    "sports, opponent_strength": "Formation, opponent_strength",
+    "sports, player_compatibility": "Formation, player_compatibility",
+    "sports, player_attribute_focus": "Star Player Position, player_strengths",
+    "sports, selected_position": "Star Player Position, name"
+  },
+  "matcher": "turn vector"
+}
