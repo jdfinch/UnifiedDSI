@@ -3,17 +3,20 @@ from pathlib import Path
 import multiprocessing as mp
 import dataclasses as dc
 import os, sys
+import textwrap as tw
 import json
 import copy as cp
 import torch as pt
 import gc
+import socket as sk
+import ezpyzy as ez
 import typing as T
 from dsi.dsi2 import DsiExperiment, nvidia_smi
 
 mp.set_start_method('spawn', force=True)
 
 
-def run_experiment(
+def run_multiprocessed_experiment(
     **kwargs
 ):
     exname = kwargs['experiment_name']
@@ -47,18 +50,36 @@ def run_experiment(
     log.close()
 
 
-def main(*experiments: DsiExperiment):
+def run_multiprocessed_experiments(*experiments: DsiExperiment):
     processes = []
     for ex in experiments:
         if not isinstance(ex, DsiExperiment): continue
         process = mp.Process(
-            target=run_experiment, 
+            target=run_multiprocessed_experiment, 
             kwargs={f.name: getattr(ex, f.name) for f in dc.fields(ex)})
         print(f'  launching {ex.experiment_name}')
         process.start()
         processes.append(process)
     for process in processes:
         process.join()
+
+
+def run_nohup_experiments(exs: list[DsiExperiment]):
+    for ex in exs:
+        experiments_path = Path('ex')
+        existing_experiment_names = {
+            ''.join(path.name.split('_')[:-1]) for path in experiments_path.iterdir()}
+        ex.experiment_name = ez.denominate(
+            existing_names=existing_experiment_names) + '_' + sk.gethostname()[:4]
+        (Path('ex')/ex.experiment_name).mkdir(exist_ok=False)
+        json_dump = json.dumps({f.name: getattr(ex, f.name) for f in dc.fields(ex)})
+        (Path('ex')/ex.experiment_name/'launch.json').write_text(json_dump) # noqa
+        exn = ex.experiment_name
+        command = f'''nohup python src/dsi/dsi2.py {exn} > ex/{exn}.log 2>&1 &'''
+        # os.system(command)
+        print(f'Submitted {exn}')
+        print(' ', command)
+        print(tw.indent(json_dump, '    '))
 
 
 template = DsiExperiment(
@@ -83,53 +104,50 @@ template = DsiExperiment(
     tag="eval mp"
 )
 
-mode_ds = dict(
-    state_mode='states',
-    schema_mode='schema',
-    infer_independently_per_dialogue = False,
-    infer_independently_per_turn = False,
-    infer_full_dialogue_schema_first = True,
-)
-mode_ss = dict(
-    state_mode='states',
-    schema_mode='schema',
-    infer_independently_per_dialogue = False,
-    infer_independently_per_turn = False,
-    infer_full_dialogue_schema_first = False,
-)
-mode_dc = dict(
-    state_mode='states',
-    schema_mode='schema',
-    infer_independently_per_dialogue = True,
-    infer_independently_per_turn = False,
-    infer_full_dialogue_schema_first = True,
-)
-mode_us = dict(
-    state_mode='updates',
-    schema_mode='schema',
-    infer_independently_per_dialogue = False,
-    infer_independently_per_turn = False,
-    infer_full_dialogue_schema_first = False,
-)
-mode_uc = dict(
-    state_mode='updates',
-    schema_mode='schemaless',
-    infer_independently_per_dialogue = True,
-    infer_independently_per_turn = True,
-    infer_full_dialogue_schema_first = False,
-)
+def apply_streaming_dailogue_mode(ex: DsiExperiment):
+    ex = cp.copy(ex)
+    ex.state_mode = 'states'
+    ex.schema_mode='schema'
+    ex.infer_independently_per_dialogue = False
+    ex.infer_independently_per_turn = False
+    ex.infer_full_dialogue_schema_first = True
+    return ex
 
-def modes(ex, *modes):
-    modeltag = ''.join(c for c in ex.model_to_load if c.isupper())
-    exs = []
-    for mode in modes:
-        modedict = globals()[f"mode_{mode}"]
-        copy = cp.copy(ex)
-        copy.experiment_name = f"{modeltag}_{mode}"
-        for k, v in modedict.items():
-            setattr(copy, k, v)
-        exs.append(copy)
-    return exs
+def apply_streaming_state_mode(ex: DsiExperiment):
+    ex = cp.copy(ex)
+    ex.state_mode = 'states'
+    ex.schema_mode = 'schema'
+    ex.infer_independently_per_dialogue = False
+    ex.infer_independently_per_turn = False
+    ex.infer_full_dialogue_schema_first = False
+    return ex
+
+def apply_cluster_dialogue_mode(ex: DsiExperiment):
+    ex = cp.copy(ex)
+    ex.state_mode = 'states'
+    ex.schema_mode = 'schema'
+    ex.infer_independently_per_dialogue = True
+    ex.infer_independently_per_turn = False
+    ex.infer_full_dialogue_schema_first = True
+    return ex
+
+def apply_streaming_update_mode(ex: DsiExperiment):
+    ex = cp.copy(ex)
+    ex.state_mode = 'updates'
+    ex.schema_mode = 'schema'
+    ex.infer_independently_per_dialogue = False
+    ex.infer_independently_per_turn = False
+    ex.infer_full_dialogue_schema_first = False
+    return ex
+
+def apply_cluster_update_mode(ex: DsiExperiment):
+    ex = cp.copy(ex)
+    ex.state_mode = 'updates'
+    ex.schema_mode = 'schemaless'
+    ex.infer_independently_per_dialogue = True
+    ex.infer_independently_per_turn = True
+    ex.infer_full_dialogue_schema_first = False
+    return ex
 
 
 ######
@@ -176,28 +194,29 @@ def modes(ex, *modes):
 # fn.base_model_repo_id = 'meta-llama/Llama-3.2-3B-Instruct'
 # fns = modes(fn, 'uc', 'us')
 
-fs = cp.copy(template)
-fs.model_to_load = 'ex/LivelyYoda_tebu/10000'
-fs.base_model_repo_id = 'meta-llama/Llama-3.2-3B-Instruct'
-fss = modes(fs, 'uc')
-
-mms = []
-rts = []
-fns = []
-# fss = []
 
 
 # CUDA_VISIBLE_DEVICES=5 nohup python -u src/dsi/eval.py > ex/1B_models.out 2>&1 &
 # CUDA_VISIBLE_DEVICES=1 nohup python -u src/dsi/eval.py > ex/3B_models_1.out 2>&1 &
 
 
-
 if __name__ == '__main__':
-    nvidia_smi()
-    # quit(0)
 
-    print('Launching Multiprocessed Experiments...')
-    main(*mms, *rts, *fns, *fss)
+    print(sys.executable)
+    
+    mm_temp = cp.copy(template)
+    mm_ds = apply_streaming_dailogue_mode(mm_temp)
+    mm_ss = apply_streaming_state_mode(mm_temp)
+    mm_cd = apply_cluster_dialogue_mode(mm_temp)
+    mm_su = apply_streaming_update_mode(mm_temp)
+    mm_cu = apply_cluster_update_mode(mm_temp)
+    
+    run_nohup_experiments([
+        mm_ds, mm_ss, mm_cd, mm_su, mm_cu
+    ])
+
+
+    
 
 
 

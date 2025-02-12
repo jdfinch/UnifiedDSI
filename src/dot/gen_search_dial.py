@@ -728,7 +728,7 @@ if __name__ == '__main__':
             "A soccer coach is getting help from a coaching assistant to look for a formation for the upcoming match, then a position for the star player.",
             "An assisted living manager is getting help from a consultant to look for a new hire, then a new weekly activity for the residents.",
             "An artist is getting help from an instructor to choose a subject matter, then a medium, then a venue to display their work.",
-            "A couch potato is getting help from a life coach to look for an exercise activity, then a routine."
+            "A couch potato is getting help from a life coach to look for an exercise activity, then a routine.",
         )
     )
 
