@@ -304,9 +304,67 @@ def generate_scenarios(scenarios: int|list[str] = 10, save_folder=None):
             (scenario_folder/'schema.json').write_text(json.dumps(scenario_json, indent=2))
 
 
+def update_corrected_schema(
+    file, domain=None, py_searcher_schema=None, py_recommender_schema=None, done=False
+):
+    if done: return
+    file = Path(file)
+    assert file.name == 'schema.json'
+    schemas_json = json.loads(file.read_text())
+    for schema_json in schemas_json:
+        if domain is None: print(schema_json['item_type'])
+        if schema_json['item_type'] != domain: continue
+        if py_recommender_schema is None or py_recommender_schema is None:
+            print(f"'''\n{schema_json['searcher_schema_code']}\n''',\n'''{schema_json['recommender_schema_code']}'''")
+            continue
+        gen = Generate()
+        schema_json['searcher_schema_code'] = py_searcher_schema
+        objs = gen.interpret(py_searcher_schema, temporary_namespace=False)
+        search_schema = None
+        for obj in objs.values():
+            if dc.is_dataclass(obj): search_schema = obj
+        new_search_schema = {}
+        descs = extract_variable_docstrings(py_searcher_schema)
+        for f in dc.fields(search_schema):
+            new_search_schema[f.name] = (descs[f.name], repr(f.type))
+        schema_json['recommender_schema_code'] = py_recommender_schema
+        objs = gen.interpret(py_recommender_schema, temporary_namespace=False)
+        rec_schema = None
+        for obj in objs.values():
+            if dc.is_dataclass(obj): rec_schema = obj
+        new_rec_schema = {}
+        descs = extract_variable_docstrings(py_recommender_schema)
+        for f in dc.fields(rec_schema):
+            new_rec_schema[f.name] = (descs[f.name], repr(f.type))
+        schema_json['searcher_schema'] = new_search_schema
+        schema_json['recommender_schema'] = new_rec_schema
+    if any(x is None for x in (domain, py_searcher_schema, py_recommender_schema)):
+        return
+    new_json = json.dumps(schemas_json, indent=2)
+    file.write_text(new_json)
+    print(f"Corrections got saved to the {domain} schema in {file}")
+
+
+
+
 
 if __name__ == '__main__':
-    generate_scenarios(3, save_folder='data/d0t/dot_test')
+
+    handcrafted_tasks = [
+        "A college student is getting help from an advisor to look for a major, then a course, then a section that fits their schedule.",
+        "A soccer coach is getting help from a coaching assistant to look for a formation for the upcoming match, then a position for the star player.",
+        "An assisted living manager is getting help from a consultant to look for a new hire, then a new weekly activity for the residents.",
+        "An artist is getting help from an instructor to choose a subject matter, then a medium, then a local display venue.",
+        "A couch potato is getting help from a life coach to look for an exercise activity, then a workout schedule.",
+        "A cosmetics marketing researcher is getting help from a data engineer to look for a query filter, then a sorting operation, then a data visualization.",
+        "A psychologist is getting help from a statistician to look for a statistical analysis.",
+        "A client is working with a lawyer to find a relevant regulation, a precedent-setting case, and appropriate terms for a lawsuit.",
+        "An outdoor enthusiast is getting help from a park ranger to look for a hiking trail, then a fishing spot.",
+        "An indie developer is getting help from a game designer to look for a game genre, a player character design, then a game mechanic."
+    ]
+
+    # generate_scenarios(handcrafted_tasks, save_folder='data/d0t/eval')
+
 
 
 
