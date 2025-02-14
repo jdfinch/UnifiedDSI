@@ -403,11 +403,35 @@ def simulate_scenario(scenario_folder):
 
 
 def simulate_dialogues_for_scenario(scenario_folder, n=1):
-    for i in range(n):
-        simulate_scenario(scenario_folder)
+    scenario_folder = Path(scenario_folder)
+    num_existing_dialogues = 0
+    for file in scenario_folder.glob('dial*.json'):
+        num_existing_dialogues += 1
+    for i in range(n - num_existing_dialogues):
+        for j in range(3):
+            try:
+                simulate_scenario(scenario_folder)
+                break
+            except Exception as e: pass
+        else: break
+
+def simulate_dialogues(data_folder, n_dialogues_per_scenario):
+    data_folder = Path(data_folder)
+    for scenario_folder in data_folder.glob('*__*'):
+        if scenario_folder.is_dir():
+            print(f'Generating dialogues for {scenario_folder}')
+            simulate_dialogues_for_scenario(scenario_folder, n=n_dialogues_per_scenario)
 
 
 if __name__ == '__main__':
 
-    simulate_scenario('data/d0t/dot_test/0001__family-friendly_vacation_destination__hotel_with_kid-friendly_amenities__activities_suitable_for_teenagers')
+    # simulate_scenario('data/d0t/dot_test/0001__family-friendly_vacation_destination__hotel_with_kid-friendly_amenities__activities_suitable_for_teenagers')
 
+    simulate_dialogues('data/DOTS/train', 10)
+
+    n = 0
+    for folder in Path('data/DOTS/train').glob('*__*'):
+        if folder.is_dir():
+            for file in folder.glob('dial*.json'):
+                n += 1
+    print(f'Got {n} dialogues')

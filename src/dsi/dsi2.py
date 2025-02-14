@@ -595,8 +595,10 @@ class DsiExperiment:
 
     def preprocess_data_for_dsi(self, 
         dialogues: dial.Dialogues,
-        predict_state=False
+        predict_state=False,
+        noise: dial.Dialogues = None,
     ) -> list[seq.Llama3Sequence]:
+        if noise: assert len(noise) == len(dialogues) and all(len(x.states) == len(y.states) for x, y in zip(noise, dialogues))
         sequences = []
         all_schemas = {domain: schema for dialogue in dialogues for domain, schema in dialogue.domains().items()}
         all_domains = list(all_schemas)
@@ -678,6 +680,16 @@ class DsiExperiment:
                 seq.AssistantResponse(seq_state)
             ])
             sequences.append(sequence)
+            '''
+            Add additional training sequences with a corrections segment.
+
+            Collate corrections only on the dialogue level using a noisy prediction dataset for the schema + output
+                - do NOT train on the noisy outputs, set them to -100 label
+                - some slot names should be correct (take from the gold labels instead)
+                - some domains should be correct (take from the gold labels instead)
+
+            Then add an additional prediction option, where correction generation directly updates the running_schema for streaming approaches
+            '''
         return sequences
 
 
