@@ -1,3 +1,7 @@
+import sys
+# sys.path = ["/Users/yasasvijosyula/Downloads/UnifiedDSI/src"]
+# PYTHONPATH="/Users/yasasvijosyula/Downloads/UnifiedDS/src" 
+
 
 from dot.gen_scenarios import update_corrected_schema
 
@@ -30,10 +34,10 @@ For each scenario folder in data/d0t/eval:
 """
 
 # example of printing the domain names
-update_corrected_schema('data/d0t/eval/0000__major__course__section/schema.json')
+# update_corrected_schema('data/d0t/eval/0000__major__course__section/schema.json')
 
 # example of printing the schemas of a domain (uncomment)
-# update_corrected_schema('data/d0t/eval/0000__major__course__section/schema.json', 'Major')
+# update_corrected_schema('data/d0t/eval/0000__major__course__section/schema.json', 'Section')
 
 # example of actually correcting the schema (set done=True for it to actually run)
 update_corrected_schema(
@@ -198,4 +202,99 @@ class Course:
     """The coursework type that accounts for the majority of the grade"""
 ```'''
 , done=True)
+
+update_corrected_schema('data/d0t/eval/0000__major__course__section/schema.json', 'Section',
+'''
+```python
+from dataclasses import dataclass
+from typing import Optional, Literal
+
+@dataclass
+class SectionCriteria:
+    """
+    Represents the criteria and preferences for finding a college course section.
+    Each field corresponds to a specific preference or criterion for searching.
+    """
+    
+    number: Optional[str] = None
+    """The specific section number of the section the student is looking for."""
+    
+    time: Optional[str] = None
+    """The preferred time at which the section is offered (e.g., '10:00 AM - 11:00 AM')."""
+    
+    days: Optional[list[Literal['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']]] = None
+    """The preferred days on which the section is offered."""
+    
+    instructor: Optional[str] = None
+    """The preferred instructor for the section."""
+    
+    location: Optional[str] = None
+    """The preferred location where the section is held (e.g., 'Main Campus', 'Online')."""
+```
+''',
+'''```python
+from dataclasses import dataclass
+from typing import Optional, Literal
+
+@dataclass
+class Section:
+    """
+    Represents a college course section. Each field corresponds to specific
+    attributes of a course section that might be considered by a student.
+    All fields default to None to handle missing information.
+    """
+
+    number: Optional[str] = None
+    """The section number."""
+
+    time: Optional[str] = None
+    """The time at which the section is offered."""
+
+    days: Optional[Literal['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']] = None
+    """The days on which the section is held."""
+
+    instructor: Optional[str] = None
+    """The instructor for the section."""
+
+    location: Optional[str] = None
+    """The location where the section is held."""
+
+    credits: Optional[int] = None
+    """The number of credits the section offers."""
+
+    section_type: Optional[Literal['Lecture', 'Lab', 'Seminar', 'Workshop']] = None
+    """The type of section, such as Lecture, Lab, Seminar, or Workshop."""
+
+    enrollment_open: Optional[bool] = None
+    """Whether the section currently has open enrollment."""
+
+    def matches_criteria(self, criteria: 'SectionCriteria') -> bool:
+        """
+        Determines if this section matches the given search criteria.
+
+        Args:
+            criteria (SectionCriteria): The criteria against which to check this section.
+
+        Returns:
+            bool: True if this section matches all specified criteria, False otherwise.
+        """
+        if criteria.name is not None and self.name != criteria.name:
+            return False
+        if criteria.time is not None and self.time != criteria.time:
+            return False
+        if criteria.days is not None and self.days != criteria.days:
+            return False
+        if criteria.instructor is not None and self.instructor != criteria.instructor:
+            return False
+        if criteria.location is not None and self.location != criteria.location:
+            return False
+        if criteria.credits is not None and self.credits != criteria.credits:
+            return False
+        if criteria.section_type is not None and self.section_type != criteria.section_type:
+            return False
+        if criteria.enrollment_open is not None and self.enrollment_open != criteria.enrollment_open:
+            return False
+        return True
+```''', done=True
+    )
 

@@ -532,7 +532,7 @@ class DsiExperiment:
         prompts = self.preprocess_data_for_dsi(dialogues, predict_state=True)
         generations = self.generate([x.text for x in prompts])
         states = [State.parse(x) for x in generations]
-        for dialogue, state in zip(dialogues, states):
+        for dialogue, state in tqdm(zip(dialogues, states), desc='Constructing last states'):
             last_state = {}
             for domain in state.domain_states:
                 for slot_value in domain.slot_values:
@@ -1127,27 +1127,27 @@ if __name__ == '__main__':
         # model_to_load='meta-llama/Llama-3.2-1B-Instruct',
         # base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
         # physical_batch_size=4,
-        model_to_load='meta-llama/Llama-3.2-3B-Instruct',
-        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
-        physical_batch_size=2,
-        # model_to_load='meta-llama/Llama-3.1-8B-Instruct',
-        # base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        # physical_batch_size=1,
+        # model_to_load='meta-llama/Llama-3.2-3B-Instruct',
+        # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
+        # physical_batch_size=2,
+        model_to_load='meta-llama/Llama-3.1-8B-Instruct',
+        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
+        physical_batch_size=1,
         quantization='nf4dq',
         max_seq_len=2048,
         max_new_tokens=1024,
         device='cuda:5',
         new_lora_rank=1,
-        epochs=1,
+        epochs=100,
         batch_size=8,
-        steps_to_validate_on=(100, 200, 500, 1000, 2000, 4000, 7000, 10000),
+        steps_to_validate_on=(100, 500, 1000, 2000, 5000, 10000, 15000, 20000, 30000),
         warmup=100,
         learning_rate=1e-4,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
         decoding_batch_size=4,
         downsample_eval_dialogues=10,
-        state_mode='updates',
+        state_mode='states',
         schema_mode='schema',
         infer_independently_per_dialogue = False,
         infer_independently_per_turn = False,
@@ -1157,15 +1157,16 @@ if __name__ == '__main__':
         max_schema_size=100,
         # train_data_path='data/d0t/dot_2',
         # train_data_path='data/sgd/train',
-        # train_data_path='data/DOTS/train', 
-        train_data_path='data/multiwoz24/dev_dials.json',       
-        train_revisions_path='ex/RKB_dc_100/0/dsi_dial_schemas.json',
+        train_data_path='data/DOTS/train', 
+        # train_data_path='data/multiwoz24/dev_dials.json',       
+        # train_revisions_path='ex/RKB_dc_100/0/dsi_dial_schemas.json',
+        train_revisions_path=None,
         train_num_turn_level_seqs_per_dialogue=1,
         train_max_imported_schemata=3,
         train_percent_empty_schema=0.2,
-        train_percent_full_schema=0.2,
+        train_percent_full_schema=0.4,
         rng_seed=None,
-        tag="rerng"
+        tag="final"
     )
 
     if Path(training_experiment.train_data_path).name == 'd0t':
@@ -1219,10 +1220,10 @@ if __name__ == '__main__':
     # -utdial-25
     # -nowindow
 
-    # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_RKB-dc-noise.out 2>&1 &
+    # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_RKB-dc-noise_take2.out 2>&1 &
 
     evaluation_experiment = DsiExperiment(
-        experiment_name='RKB_dc_noise',
+        experiment_name='RKB_dc_noise_take2',
         model_to_load="ex/RogueKefBir_tebu/10000",
         base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
         **mode_dc,
@@ -1254,16 +1255,83 @@ if __name__ == '__main__':
 
     nvidia_smi()
 
-    # evaluation_experiment.run()
+    evaluation_experiment.run()
     # launch(evaluation_experiment)
 
     # launch(training_experiment)
-    training_experiment.run()
+    # training_experiment.run()
 
     # calculate_metrics(
     #     'ex/DashingZuckuss_tebu/0/dsi_dial_states.json',
     #     dial.multiwoz_to_dialogues('data/multiwoz24/dev_dials.json')
     # )
+
+
+
+#####################################################################################3
+    # trying to map generations to original dialogues ---> cannot map all dialogues?!?!
+
+
+    # import re
+
+    # dst_mode = False
+    # file_text = pl.Path('ex/3B_RKB-dc-noise.out').read_text()
+    # generations = file_text.split('<|begin_of_text|><|start_header_id|>system<|end_header_id|>')[1:]
+    # ...
+    # dialogues = dial.dot2_to_dialogues(evaluation_experiment.eval_data_path)
+    # prompts = evaluation_experiment.preprocess_data_for_dsi(dialogues, predict_state=True)
+    # states = [State.parse(x) for x in generations]
+
+    # dialogue_str_to_dialogue_obj = {}
+    # for dialogue_obj, prompt in zip(dialogues, prompts):
+    #     prompt = prompt.text
+    #     start = prompt.index('# Dialogue\n') + len('# Dialogue\n')
+    #     end = prompt.index('\n\nIdentify Key Information Values from the Dialogue using the Key Information Types.')
+    #     dialogue = prompt[start:end].replace(' ', '')
+    #     if dialogue in dialogue_str_to_dialogue_obj:
+    #         print('dialogue already exists in dialogue mapping')
+    #     dialogue_str_to_dialogue_obj[dialogue] = dialogue_obj
+
+    # dialogues_in_generation_order = []
+    # for generation in tqdm(generations, desc='Mapping generations to original dialogues'):
+    #     start = generation.index('# Dialogue\n') + len('# Dialogue\n')
+    #     end = generation.index('\n\nIdentify Key Information Values from the Dialogue using the Key Information Types.')
+    #     dialogue = generation[start:end].replace(' ', '')
+    #     if dialogue not in dialogue_str_to_dialogue_obj:
+    #         ...
+    #         dialogues_in_generation_order.append(None)
+    #         print('no match')
+    #     else:
+    #         dialogue_obj = dialogue_str_to_dialogue_obj[dialogue]
+    #         dialogues_in_generation_order.append(dialogue_obj)
+    # ...
+    # assert len(dialogues_in_generation_order) == len(dialogues)
+    # assert len(dialogues_in_generation_order) == len(generations)
+    # for dialogue, state in tqdm(zip(dialogues, states), desc='Constructing last states'):
+    #     last_state = {}
+    #     for domain in state.domain_states:
+    #         for slot_value in domain.slot_values:
+    #             if slot_value.value.lower() in ('none', ''):
+    #                 continue
+    #             if (
+    #                 (domain.domain, slot_value.slot) not in dialogue.schema
+    #                 and (evaluation_experiment.desc_mode == 'slotnames' or hasattr(slot_value, 'description'))
+    #             ): # claims to discover a new slot
+    #                 if dst_mode is False:
+    #                     dialogue.schema[domain.domain, slot_value.slot] = (
+    #                         getattr(slot_value, 'description', ''), [])
+    #                     last_state[domain.domain, slot_value.slot] = slot_value.value    
+    #             elif (domain.domain, slot_value.slot) in dialogue.schema: # tracked a slot
+    #                 last_state[domain.domain, slot_value.slot] = slot_value.value
+    #             if (domain.domain, slot_value.slot) in dialogue.schema: # got a slot hit
+    #                 dialogue.schema[domain.domain, slot_value.slot] = dialogue.schema.pop(
+    #                     (domain.domain, slot_value.slot))
+    #                 if dst_mode:
+    #                     evaluation_experiment.state_tracking_counts[domain.domain, slot_value.slot] += 1
+    #                 else:
+    #                     evaluation_experiment.streaming_discovery_counts[domain.domain, slot_value.slot] += 1
+    #     if dialogue.states:
+    #         dialogue.states[-1] = last_state
     
 
     

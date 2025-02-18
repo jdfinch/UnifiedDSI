@@ -427,10 +427,10 @@ if __name__ == '__main__':
 
     # simulate_scenario('data/d0t/dot_test/0001__family-friendly_vacation_destination__hotel_with_kid-friendly_amenities__activities_suitable_for_teenagers')
 
-    # simulate_dialogues('data/DOTS/train', 10)
+    # simulate_dialogues('data/DOTS/eval', 40)
 
     n = 0
-    for folder in Path('data/DOTS/train').glob('*__*'):
+    for folder in Path('data/DOTS/eval').glob('*__*'):
         if folder.is_dir():
             for file in folder.glob('dial*.json'):
                 n += 1
