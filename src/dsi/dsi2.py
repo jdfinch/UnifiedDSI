@@ -64,6 +64,7 @@ class DsiExperiment:
         'Travel_1',
         'Trains_1')
     train_downsample_seqs: int|None = None
+    train_revisions_path: str|None = None
 
     eval_data_path: str = 'data/multiwoz24/dev_dials.json'
     downsample_eval_dialogues: int|None = None
@@ -74,6 +75,9 @@ class DsiExperiment:
     train_percent_empty_schema: float = 0.2
     train_percent_foregin_schema: float = 0.5
     train_max_imported_schemata: int = 5
+    revise_percent_perfect_schema: float = 0.5
+    revise_percent_full_rewrite: float = 0.3
+    revise_percent_domain_deduplication_only: float = 0.3
     schema_mode: T.Literal['schemaless', 'schema'] = 'schema'
     state_mode: T.Literal['states', 'updates'] = 'states'
     desc_mode: T.Literal['descriptions', 'slotnames'] = 'descriptions'
@@ -183,7 +187,8 @@ class DsiExperiment:
         if self.epochs == 0:
             self.evaluate(evaluation_data, gold_data)
             return
-        if 'd0t' in self.train_data_path and Path(self.train_data_path).name != 'd0t':
+        if ('d0t' in self.train_data_path or 'DOTS' in self.train_data_path
+        ) and Path(self.train_data_path).name != 'd0t':
             training_data: dial.Dialogues = dial.dot2_to_dialogues(self.train_data_path)
             if self.train_num_turn_level_seqs_per_dialogue:
                 training_data = self.cut_dialogues_into_contexts(
@@ -201,8 +206,17 @@ class DsiExperiment:
             if self.train_num_turn_level_seqs_per_dialogue:
                 training_data = self.cut_dialogues_into_contexts(
                     training_data, cut_every_context=self.state_mode=='updates')
+        elif 'multiwoz' in self.train_data_path:
+            training_data: dial.Dialogues = dial.multiwoz_to_dialogues(self.train_data_path)
+            if self.train_num_turn_level_seqs_per_dialogue:
+                training_data = self.cut_dialogues_into_contexts(
+                    training_data, cut_every_context=self.state_mode=='updates')
         else:
             raise NotImplementedError
+        if self.train_revisions_path is not None:
+            revisions_training_data = dial.multiwoz_to_dialogues(self.train_data_path)
+            revisions_dialogues = dial.Dialogues.load(self.train_revisions_path)
+            revisions_training = self.preprocess_data_for_schema_revision(revisions_training_data, revisions_dialogues)
         if self.train_downsample_seqs:
             training_data = training_data.downsample(self.train_downsample_seqs)
         experiment_path = pl.Path(self.project_path).expanduser()/'ex'/self.experiment_name
@@ -541,7 +555,8 @@ class DsiExperiment:
                             self.state_tracking_counts[domain.domain, slot_value.slot] += 1
                         else:
                             self.streaming_discovery_counts[domain.domain, slot_value.slot] += 1
-            dialogue.states[-1] = last_state
+            if dialogue.states:
+                dialogue.states[-1] = last_state
         return dialogues
 
     def generate(self, prompts: list[str]) -> list[str]:
@@ -596,9 +611,7 @@ class DsiExperiment:
     def preprocess_data_for_dsi(self, 
         dialogues: dial.Dialogues,
         predict_state=False,
-        noise: dial.Dialogues = None,
     ) -> list[seq.Llama3Sequence]:
-        if noise: assert len(noise) == len(dialogues) and all(len(x.states) == len(y.states) for x, y in zip(noise, dialogues))
         sequences = []
         all_schemas = {domain: schema for dialogue in dialogues for domain, schema in dialogue.domains().items()}
         all_domains = list(all_schemas)
@@ -680,17 +693,155 @@ class DsiExperiment:
                 seq.AssistantResponse(seq_state)
             ])
             sequences.append(sequence)
-            '''
-            Add additional training sequences with a corrections segment.
-
-            Collate corrections only on the dialogue level using a noisy prediction dataset for the schema + output
-                - do NOT train on the noisy outputs, set them to -100 label
-                - some slot names should be correct (take from the gold labels instead)
-                - some domains should be correct (take from the gold labels instead)
-
-            Then add an additional prediction option, where correction generation directly updates the running_schema for streaming approaches
-            '''
         return sequences
+    
+    def preprocess_data_for_schema_revision(self, dialogues: dial.Dialogues, noise: dial.Dialogues):
+        '''
+        Add additional training sequences with a corrections segment.
+
+        Collate corrections only on the dialogue level using a noisy prediction dataset for the schema + output
+            - some slot names should be correct (take from the gold labels instead)
+            - some domains should be correct (take from the gold labels instead)
+
+        Then add an additional prediction option, where correction generation directly updates the running_schema for streaming approaches
+        '''
+        dialogue_to_predicted_schema: dict[str, dict[str, dict[str, str]]] = {}
+        for dialogue in noise:
+            dialogue_to_predicted_schema[dialogue.id] = {}
+            slots = {slot for slot in dialogue.states[-1]}
+            for (domain, slot), (desc, _) in dialogue.schema.items():
+                if (domain, slot) in slots:
+                    dialogue_to_predicted_schema[dialogue.id].setdefault(domain, {})[slot] = desc
+        # assert all(dialogue.id in dialogue_to_predicted_schema for dialogue in dialogues)
+        all_schemas = {domain: schema for dialogue in dialogues for domain, schema in dialogue.domains().items()}
+        all_domains = list(all_schemas)
+        for dialogue in dialogues:
+            old_schema = {}
+            if dialogue.id not in dialogue_to_predicted_schema: continue
+            predicted_schema = dialogue_to_predicted_schema[dialogue.id]
+            gold_schema = {} # in dialogue order
+            for state_update in dialogue.updates():
+                for domain, slot in state_update:
+                    desc = dialogue.schema[domain, slot]
+                    gold_schema.setdefault(domain, {})[slot] = desc
+            new_schema = cp.deepcopy(gold_schema)
+            gold_slots_not_in_dialogue = [(domain, slot, desc) for (domain, slot), (desc, _) in dialogue.schema.items()
+                if domain not in gold_schema or slot not in gold_schema[domain]]
+            # import foreign schemas
+            n_imported_domains = self.rng.randint(0, 3)
+            for _ in range(n_imported_domains):
+                while (imported_domain:=self.rng.choice(all_domains)) in gold_schema: continue
+                imported_schema = all_schemas[imported_domain]
+                for slot, (desc, _) in imported_schema.items():
+                    old_schema.setdefault(imported_domain, {})[slot] = desc
+                    new_schema.setdefault(imported_domain, {})[slot] = desc
+            if self.rng.random() < self.revise_percent_perfect_schema:
+                # perfect schema (train to copy)
+                old_schema.update(cp.deepcopy(gold_schema))
+                continue
+            # try to find an order-based domain map from gold to predicted schemas
+            if len(predicted_schema) == len(gold_schema):
+                schema_map = dict(zip(gold_schema, predicted_schema))
+            elif len(predicted_schema) == 1:
+                single_predicted_domain, = predicted_schema
+                schema_map = {gold_domain: single_predicted_domain for gold_domain in gold_schema}
+            elif len(gold_schema) == 1 and len(predicted_schema) > 0:
+                single_gold_domain, = gold_schema
+                schema_map = {single_gold_domain: predicted_domain for predicted_domain in predicted_schema}
+            else:
+                # no schema domain map can be reliably found, default to domainless deduplication vs full rewrite
+                schema_map = None
+                if self.rng.random() < self.revise_percent_full_rewrite:
+                    # full rewrite from predicted to gold
+                    old_schema.update(cp.deepcopy(predicted_schema))
+                else:
+                    # deduplication by adding some noisy predicted slots to the gold schema
+                    old_schema.update(cp.deepcopy(gold_schema))
+                    if predicted_schema:
+                        domains_to_dedup = self.rng.sample(list(predicted_schema), self.rng.randint(1, len(predicted_schema)))
+                        for domain_to_dedup in domains_to_dedup:
+                            pred_slots = predicted_schema[domain_to_dedup]
+                            slot_dups = self.rng.sample(list(pred_slots.items()), self.rng.randint(1, len(pred_slots)))
+                            for slot, desc in slot_dups:
+                                old_schema.setdefault(domain_to_dedup, {})[slot] = desc
+                continue
+            # domain map found, create per-domain revision traininig
+            for gold_domain, gold_domain_schema in gold_schema.items():
+                pred_domain = schema_map[gold_domain]
+                pred_domain_schema = predicted_schema[pred_domain]
+                if (r:=self.rng.random()) < self.revise_percent_full_rewrite:
+                    # full revision of domain schema
+                    old_schema[pred_domain] = cp.deepcopy(pred_domain_schema)
+                else:
+                    # deduplicate schema
+                    if r < (1-self.revise_percent_domain_deduplication_only):
+                        # also train to create new revised slots (by removing gold slots from old_schema)
+                        old_schema[gold_domain] = dict(self.rng.sample(
+                            list(gold_domain_schema.items()), self.rng.randint(1, len(gold_domain_schema))))
+                    else:
+                        old_schema[gold_domain] = cp.deepcopy(gold_domain_schema)
+                    if self.rng.random() < 0.5:
+                        # deduplicate with noisy domain name
+                        dups = self.rng.sample(
+                            list(pred_domain_schema.items()), self.rng.randint(1, len(pred_domain_schema)))
+                        for slot, desc in dups:
+                            old_schema.setdefault(pred_domain, {})[slot] = desc
+                    else:
+                        # deduplicate slots within a domain
+                        dups = self.rng.sample(
+                            list(pred_domain_schema.items()), self.rng.randint(1, len(pred_domain_schema)))
+                        for slot, desc in dups:
+                            old_schema.setdefault(gold_domain, {})[slot] = desc
+            # add some gold slots not in dialogue to simulate discoveries from other dialogues
+            foreign_gold_slots = self.rng.sample(gold_slots_not_in_dialogue, 
+                k=self.rng.randint(0, len(gold_slots_not_in_dialogue)))
+            for domain, slot, desc in foreign_gold_slots:
+                if domain not in old_schema: continue
+                old_schema[domain][slot] = desc
+                new_schema[domain][slot] = desc
+            # shuffle and order
+            old_domain_order = list(old_schema)
+            self.rng.shuffle(old_domain_order)
+            old_domain_ranks = {d: i for i, d in enumerate(old_domain_order)}
+            if schema_map is not None: # little fix for domains that got renamed to gold
+                for gold_dom, pred_dom in schema_map.items():
+                    if gold_dom in old_domain_ranks:
+                        old_domain_ranks[pred_dom] = old_domain_ranks[gold_dom]
+            old_slot_ranks = {}
+            for old_domain, old_slots in old_schema.items():
+                old_slots = list(old_slots.items())
+                self.rng.shuffle(old_slots)
+                for old_slot, desc in old_slots:
+                    old_slot_ranks[old_domain, old_slot] = len(old_slot_ranks)
+            old_schema_order = []
+            for domain, slots in old_schema.items():
+                domain_index = old_domain_ranks[domain]
+                for slot, desc in slots.items():
+                    slot_index = old_slot_ranks[domain, slot]
+                    old_schema_order.append((domain_index, slot_index, domain, slot, desc))
+            old_schema_order.sort()
+            discovery_domain_ranks = {d: i for i, d in enumerate(gold_schema)}
+            discovery_slot_ranks = [(d, s) for d, ss in gold_schema.items() for s in ss]
+            discovery_slot_ranks = {s: i for i, s in enumerate(discovery_slot_ranks)}
+            new_schema_order = []
+            for new_domain, new_slots in new_schema.items():
+                domain_from_old = new_domain if schema_map is None else schema_map.get(new_domain, new_domain)
+                if domain_from_old in old_domain_ranks:
+                    domain_index = old_domain_ranks[domain_from_old]
+                else:
+                    domain_index = len(old_domain_ranks) + discovery_domain_ranks[new_domain]
+                for new_slot, desc in new_slots.items():
+                    if (domain_from_old, new_slot) in old_slot_ranks:
+                        slot_index = old_slot_ranks[domain_from_old, new_slot]
+                    else:
+                        slot_index = discovery_slot_ranks.get((new_domain, new_slot), -1)
+                    new_schema_order.append((domain_index, slot_index, new_domain, new_slot, desc))
+            new_schema_order.sort()
+            ...
+        ...
+            
+            
+            
 
 
 @dc.dataclass
@@ -997,7 +1148,7 @@ if __name__ == '__main__':
         decoding_batch_size=4,
         downsample_eval_dialogues=10,
         state_mode='updates',
-        schema_mode='schemaless',
+        schema_mode='schema',
         infer_independently_per_dialogue = False,
         infer_independently_per_turn = False,
         infer_full_dialogue_schema_first = True,
@@ -1006,7 +1157,9 @@ if __name__ == '__main__':
         max_schema_size=100,
         # train_data_path='data/d0t/dot_2',
         # train_data_path='data/sgd/train',
-        train_data_path='data/d0t',        
+        # train_data_path='data/DOTS/train', 
+        train_data_path='data/multiwoz24/dev_dials.json',       
+        train_revisions_path='ex/RKB_dc_100/0/dsi_dial_schemas.json',
         train_num_turn_level_seqs_per_dialogue=1,
         train_max_imported_schemata=3,
         train_percent_empty_schema=0.2,
@@ -1066,21 +1219,21 @@ if __name__ == '__main__':
     # -utdial-25
     # -nowindow
 
-    # nohup python -u src/dsi/dsi2.py > ex/8B_ET-us-utdial-25-nowindow.out 2>&1 &
+    # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_RKB-dc-noise.out 2>&1 &
 
     evaluation_experiment = DsiExperiment(
-        experiment_name='ET_us_utdial_25-nowindow',
-        model_to_load="ex/ExoticTeth_tebu/1000",
-        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        **mode_us,
+        experiment_name='RKB_dc_noise',
+        model_to_load="ex/RogueKefBir_tebu/10000",
+        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
+        **mode_dc,
         downsample_eval_dialogues=None,       # 3, 10, 30, 100, None
         
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
 
-        eval_data_path='data/utdial',
+        eval_data_path='data/DOTS/train',
 
-        device='cuda:0',
+        device='cuda:7',
 
 
         **projdict,
@@ -1101,11 +1254,11 @@ if __name__ == '__main__':
 
     nvidia_smi()
 
-    evaluation_experiment.run()
+    # evaluation_experiment.run()
     # launch(evaluation_experiment)
 
     # launch(training_experiment)
-    # training_experiment.run()
+    training_experiment.run()
 
     # calculate_metrics(
     #     'ex/DashingZuckuss_tebu/0/dsi_dial_states.json',

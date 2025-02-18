@@ -427,7 +427,7 @@ if __name__ == '__main__':
 
     # simulate_scenario('data/d0t/dot_test/0001__family-friendly_vacation_destination__hotel_with_kid-friendly_amenities__activities_suitable_for_teenagers')
 
-    simulate_dialogues('data/DOTS/train', 10)
+    # simulate_dialogues('data/DOTS/train', 10)
 
     n = 0
     for folder in Path('data/DOTS/train').glob('*__*'):
