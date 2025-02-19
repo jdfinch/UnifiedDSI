@@ -245,8 +245,11 @@ def dot2_to_dialogues(dot_path: str) -> Dialogues:
         for domain_json in schema_json:
             domain_name = domain_json['item_type']
             for slot_name, slot_json in domain_json['searcher_schema'].items():
-                slot_desc = slot_json['desc']
-                type_annotation = slot_json['type']
+                if isinstance(slot_json, list):
+                    slot_desc, type_annotation = slot_json
+                else:
+                    slot_desc = slot_json['desc']
+                    type_annotation = slot_json['type']
                 category_pattern = re.compile(r"(?:(?:typing\.)?Optional\[)?(?:typing\.)?Literal(\[[^]]+])")
                 if category_annotation_match:=re.match(category_pattern, type_annotation):
                     categories = ast.literal_eval(category_annotation_match.group(1))
@@ -257,7 +260,7 @@ def dot2_to_dialogues(dot_path: str) -> Dialogues:
             dialogue_path: Path
             if dialogue_path.name == 'schema.json' or not dialogue_path.is_file(): continue
             if 'DS_Store' in dialogue_path.name: continue
-            dialogue = Dialogue(id='/'.join(dialogue_path.parts[:-2]).removesuffix('.json'), schema=schema)
+            dialogue = Dialogue(id='/'.join(dialogue_path.parts[-2:]).removesuffix('.json'), schema=schema)
             dialogue_json = json.loads(dialogue_path.read_text())
             state = dict.fromkeys(dialogue.schema)
             for dialogue_part_json in dialogue_json:

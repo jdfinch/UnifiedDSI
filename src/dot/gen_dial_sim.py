@@ -430,8 +430,10 @@ if __name__ == '__main__':
     # simulate_dialogues('data/DOTS/eval', 40)
 
     n = 0
-    for folder in Path('data/DOTS/eval').glob('*__*'):
+    for folder in Path('data/DOTS/train').glob('*__*'):
         if folder.is_dir():
             for file in folder.glob('dial*.json'):
+                actual_id = f"{folder.name}/{file.name}"
+                
                 n += 1
     print(f'Got {n} dialogues')

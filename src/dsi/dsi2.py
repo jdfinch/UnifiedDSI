@@ -85,6 +85,7 @@ class DsiExperiment:
     infer_independently_per_dialogue: bool = False
     infer_independently_per_turn: bool = False
     infer_full_dialogue_schema_first: bool|int = 10
+    infer_revisions: bool = False
     max_schema_size: int = 100
     infer_bad_slots_by_tracked_counts: bool = False
     infer_bad_slots_by_min_count_per_dialogue_window: tuple[int, int]|None = None
@@ -214,18 +215,23 @@ class DsiExperiment:
         else:
             raise NotImplementedError
         if self.train_revisions_path is not None:
-            revisions_training_data = dial.multiwoz_to_dialogues(self.train_data_path)
+            revisions_training_data = dial.dot2_to_dialogues(self.train_data_path)
             revisions_dialogues = dial.Dialogues.load(self.train_revisions_path)
             revisions_training = self.preprocess_data_for_schema_revision(revisions_training_data, revisions_dialogues)
+        else:
+            revisions_training = seq.Sequences(tokenizer=self.tokenizer)
         if self.train_downsample_seqs:
             training_data = training_data.downsample(self.train_downsample_seqs)
         experiment_path = pl.Path(self.project_path).expanduser()/'ex'/self.experiment_name
         experiment_path.mkdir(parents=True, exist_ok=True)
         training_data.downsample(min(30, len(training_data))).save(experiment_path/'train_dials.json')
+        dsi_training_sequences = self.preprocess_data_for_dsi(training_data)
         if self.current_step == 0 and 0 in self.steps_to_validate_on:
             self.evaluate(evaluation_data, gold_data)
         if self.epochs > 0:
-            for self.current_epoch, steps in enumerate(self.training(training_data), 1):
+            for self.current_epoch, steps in enumerate(self.training(
+                dsi_training_sequences, revisions_training
+            ), 1):
                 for step_in_epoch, nll in enumerate(steps, 1):
                     self.current_step += 1
                     if self.current_step in self.steps_to_validate_on:
@@ -269,11 +275,11 @@ class DsiExperiment:
         (Path(pred_save_path)/'em_results.json').write_text(emresults_json)
         return predictions
 
-    def training(self, data: dial.Dialogues):
+    def training(self, *sequences: seq.Sequences):
         self.model.train()
-        sequences = self.preprocess_data_for_dsi(data)
-        tokens = seq.tokenize(sequences, self.tokenizer,
-            label_span_types=[('State', 'domain_states'), ('State', 'eot')])
+        tokens = []
+        for sequences in sequences:
+            tokens.extend(sequences.tokenize())
         def display_some_training(seqs: list[list[tuple[str, int, int]]]):
             seqs = rng.sample(seqs, min(100, len(seqs)))
             for seq in seqs:
@@ -367,7 +373,9 @@ class DsiExperiment:
                     self.predict_last_turn([dialogue])
                     for slot in dialogue.schema:
                         window[slot].append(slot in dialogue.states[-1])
-                    if self.infer_bad_slots_by_min_count_per_dialogue_window:
+                    if self.infer_revisions:
+                        self.predict_revisions(dialogue)
+                    elif self.infer_bad_slots_by_min_count_per_dialogue_window:
                         quota, timeframe = self.infer_bad_slots_by_min_count_per_dialogue_window
                         for slot, slot_history in list(window.items()):
                             if (len(slot_history) >= timeframe and sum(slot_history[-timeframe:]) < quota):
@@ -386,7 +394,7 @@ class DsiExperiment:
                                 running_schema.pop(slot, None) # remove from the beginning (least recently hit slot)
                                 print(f'Eliminated {slot} with count {self.streaming_discovery_counts[slot]}')
                     dialogue.schema = dict(running_schema)
-                if self.infer_bad_slots_by_min_count_per_dialogue_window:
+                if self.infer_bad_slots_by_min_count_per_dialogue_window and not self.infer_revisions:
                     for slot, slot_history in window.items():
                         if sum(slot_history) < quota:
                             running_schema.pop(slot, None)
@@ -424,7 +432,9 @@ class DsiExperiment:
                                 print(f'Eliminated {slot} with count {self.streaming_discovery_counts[slot]}')
                     for slot in dialogue.schema:
                         window[slot].append(any(slot in state for state in dialogue.states))
-                    if self.infer_bad_slots_by_min_count_per_dialogue_window:
+                    if self.infer_revisions:
+                        self.predict_revisions(dialogue)
+                    elif self.infer_bad_slots_by_min_count_per_dialogue_window:
                         quota, timeframe = self.infer_bad_slots_by_min_count_per_dialogue_window
                         for slot, slot_history in list(window.items()):
                             if (len(slot_history) >= timeframe and sum(slot_history[-timeframe:]) < quota):
@@ -432,7 +442,7 @@ class DsiExperiment:
                                 print(f'Eliminated {slot} with history {window[slot]}')
                                 del window[slot]
                     dialogue.schema = dict(running_schema)
-                if self.infer_bad_slots_by_min_count_per_dialogue_window:
+                if self.infer_bad_slots_by_min_count_per_dialogue_window and not self.infer_revisions:
                     for slot, slot_history in window.items():
                         if sum(slot_history) < quota:
                             running_schema.pop(slot, None)
@@ -491,7 +501,9 @@ class DsiExperiment:
                     dialogue.convert_updates_to_full_states()
                     for slot in dialogue.schema:
                         window[slot].append(any(slot in state for state in dialogue.states))
-                    if self.infer_bad_slots_by_min_count_per_dialogue_window:
+                    if self.infer_revisions:
+                        self.predict_revisions(dialogue)
+                    elif self.infer_bad_slots_by_min_count_per_dialogue_window:
                         quota, timeframe = self.infer_bad_slots_by_min_count_per_dialogue_window
                         for slot, slot_history in list(window.items()):
                             if (len(slot_history) >= timeframe and sum(slot_history[-timeframe:]) < quota):
@@ -499,7 +511,7 @@ class DsiExperiment:
                                 print(f'Eliminated {slot} with history {window[slot]}')
                                 del window[slot]
                     dialogue.schema = dict(running_schema)
-                if self.infer_bad_slots_by_min_count_per_dialogue_window:
+                if self.infer_bad_slots_by_min_count_per_dialogue_window and not self.infer_revisions:
                     for slot, slot_history in window.items():
                         if sum(slot_history) < quota:
                             running_schema.pop(slot, None)
@@ -517,6 +529,31 @@ class DsiExperiment:
                 raise NotImplementedError
         else:
             raise NotImplementedError
+        
+    def predict_revisions(self, dialogue: dial.Dialogue):
+        dialogue_turns = [DialogueTurn(speaker, text) 
+                for speaker, text in zip(it.cycle(('User', 'Agent')), dialogue.turns[:-1])]
+        prompt = seq.Llama3Sequence([
+            seq.System("You are a helpful and knowledgeable assistant."),
+            seq.User(DsiPrompt(turns=dialogue_turns, schema=[
+                DomainSchema(domain=domain, slot_descriptions=[
+                    SlotDescription(slot, desc) for slot, (desc, _) in slots.items()
+                ])
+                for domain, slots in dialogue.domains().items()
+            ], instruction="Revise the schema!")),
+            seq.AssistantResponse(SchemaRevisions(schema='', eot=''))
+        ])
+        revised_schema, = self.generate(prompts=[prompt.text])
+        # parse it!
+        schema_revision: SchemaRevisions = SchemaRevisions.parse(revised_schema)
+        # mutate dialogue.schema!
+        dialogue.schema.clear()
+        dialogue.schema.update({
+            (domain_schema.domain, slot_desc.slot): (slot_desc.description, [])
+            for domain_schema in schema_revision.schema
+            for slot_desc in domain_schema.slot_descriptions
+        })
+        ...
     
     def predict_each_turn(self, dialogues: dial.Dialogues, dst_mode=False) -> list[dial.Dialogues]:
         """Output in the native sequence format for this model settings"""
@@ -693,7 +730,7 @@ class DsiExperiment:
                 seq.AssistantResponse(seq_state)
             ])
             sequences.append(sequence)
-        return sequences
+        return seq.Sequences(sequences, label_spans=[('State', 'domain_states'), ('State', 'eot')], tokenizer=self.tokenizer)
     
     def preprocess_data_for_schema_revision(self, dialogues: dial.Dialogues, noise: dial.Dialogues):
         '''
@@ -705,8 +742,11 @@ class DsiExperiment:
 
         Then add an additional prediction option, where correction generation directly updates the running_schema for streaming approaches
         '''
+        sequences = seq.Sequences(
+            label_spans={('SchemaRevisions', 'schema'), ('SchemaRevisions', 'eot')}, tokenizer=self.tokenizer)
         dialogue_to_predicted_schema: dict[str, dict[str, dict[str, str]]] = {}
         for dialogue in noise:
+            if not dialogue.states: continue
             dialogue_to_predicted_schema[dialogue.id] = {}
             slots = {slot for slot in dialogue.states[-1]}
             for (domain, slot), (desc, _) in dialogue.schema.items():
@@ -722,7 +762,7 @@ class DsiExperiment:
             gold_schema = {} # in dialogue order
             for state_update in dialogue.updates():
                 for domain, slot in state_update:
-                    desc = dialogue.schema[domain, slot]
+                    desc, _ = dialogue.schema[domain, slot]
                     gold_schema.setdefault(domain, {})[slot] = desc
             new_schema = cp.deepcopy(gold_schema)
             gold_slots_not_in_dialogue = [(domain, slot, desc) for (domain, slot), (desc, _) in dialogue.schema.items()
@@ -738,7 +778,7 @@ class DsiExperiment:
             if self.rng.random() < self.revise_percent_perfect_schema:
                 # perfect schema (train to copy)
                 old_schema.update(cp.deepcopy(gold_schema))
-                continue
+                # continue
             # try to find an order-based domain map from gold to predicted schemas
             if len(predicted_schema) == len(gold_schema):
                 schema_map = dict(zip(gold_schema, predicted_schema))
@@ -764,34 +804,35 @@ class DsiExperiment:
                             slot_dups = self.rng.sample(list(pred_slots.items()), self.rng.randint(1, len(pred_slots)))
                             for slot, desc in slot_dups:
                                 old_schema.setdefault(domain_to_dedup, {})[slot] = desc
-                continue
-            # domain map found, create per-domain revision traininig
-            for gold_domain, gold_domain_schema in gold_schema.items():
-                pred_domain = schema_map[gold_domain]
-                pred_domain_schema = predicted_schema[pred_domain]
-                if (r:=self.rng.random()) < self.revise_percent_full_rewrite:
-                    # full revision of domain schema
-                    old_schema[pred_domain] = cp.deepcopy(pred_domain_schema)
-                else:
-                    # deduplicate schema
-                    if r < (1-self.revise_percent_domain_deduplication_only):
-                        # also train to create new revised slots (by removing gold slots from old_schema)
-                        old_schema[gold_domain] = dict(self.rng.sample(
-                            list(gold_domain_schema.items()), self.rng.randint(1, len(gold_domain_schema))))
+                # continue
+            if schema_map:
+                # domain map found, create per-domain revision traininig
+                for gold_domain, gold_domain_schema in gold_schema.items():
+                    pred_domain = schema_map[gold_domain]
+                    pred_domain_schema = predicted_schema[pred_domain]
+                    if (r:=self.rng.random()) < self.revise_percent_full_rewrite:
+                        # full revision of domain schema
+                        old_schema[pred_domain] = cp.deepcopy(pred_domain_schema)
                     else:
-                        old_schema[gold_domain] = cp.deepcopy(gold_domain_schema)
-                    if self.rng.random() < 0.5:
-                        # deduplicate with noisy domain name
-                        dups = self.rng.sample(
-                            list(pred_domain_schema.items()), self.rng.randint(1, len(pred_domain_schema)))
-                        for slot, desc in dups:
-                            old_schema.setdefault(pred_domain, {})[slot] = desc
-                    else:
-                        # deduplicate slots within a domain
-                        dups = self.rng.sample(
-                            list(pred_domain_schema.items()), self.rng.randint(1, len(pred_domain_schema)))
-                        for slot, desc in dups:
-                            old_schema.setdefault(gold_domain, {})[slot] = desc
+                        # deduplicate schema
+                        if r < (1-self.revise_percent_domain_deduplication_only):
+                            # also train to create new revised slots (by removing gold slots from old_schema)
+                            old_schema[gold_domain] = dict(self.rng.sample(
+                                list(gold_domain_schema.items()), self.rng.randint(1, len(gold_domain_schema))))
+                        else:
+                            old_schema[gold_domain] = cp.deepcopy(gold_domain_schema)
+                        if self.rng.random() < 0.5:
+                            # deduplicate with noisy domain name
+                            dups = self.rng.sample(
+                                list(pred_domain_schema.items()), self.rng.randint(1, len(pred_domain_schema)))
+                            for slot, desc in dups:
+                                old_schema.setdefault(pred_domain, {})[slot] = desc
+                        else:
+                            # deduplicate slots within a domain
+                            dups = self.rng.sample(
+                                list(pred_domain_schema.items()), self.rng.randint(1, len(pred_domain_schema)))
+                            for slot, desc in dups:
+                                old_schema.setdefault(gold_domain, {})[slot] = desc
             # add some gold slots not in dialogue to simulate discoveries from other dialogues
             foreign_gold_slots = self.rng.sample(gold_slots_not_in_dialogue, 
                 k=self.rng.randint(0, len(gold_slots_not_in_dialogue)))
@@ -837,8 +878,31 @@ class DsiExperiment:
                         slot_index = discovery_slot_ranks.get((new_domain, new_slot), -1)
                     new_schema_order.append((domain_index, slot_index, new_domain, new_slot, desc))
             new_schema_order.sort()
-            ...
-        ...
+            old_order_by_dom = {}
+            for _, _, domain, slot, desc in old_schema_order:
+                old_order_by_dom.setdefault(domain, []).append((slot, desc))
+            new_order_by_dom = {}
+            for _, _, domain, slot, desc in new_schema_order:
+                new_order_by_dom.setdefault(domain, []).append((slot, desc))
+            dialogue_turns = [DialogueTurn(speaker, text) 
+                for speaker, text in zip(it.cycle(('User', 'Agent')), dialogue.turns[:-1])]
+            sequence = seq.Llama3Sequence([
+                seq.System("You are a helpful and knowledgeable assistant."),
+                seq.User(DsiPrompt(turns=dialogue_turns, schema=[
+                    DomainSchema(domain=domain, slot_descriptions=[
+                        SlotDescription(slot, desc) for slot, desc in slots
+                    ])
+                    for domain, slots in old_order_by_dom.items()
+                ], instruction="Revise the schema!")),
+                seq.AssistantResponse(SchemaRevisions(schema=[
+                    DomainSchema(domain=domain, slot_descriptions=[
+                        SlotDescription(slot, desc) for slot, desc in slots
+                    ])
+                    for domain, slots in new_order_by_dom.items()
+                ]))
+            ])
+            sequences.append(sequence)
+        return sequences
             
             
             
@@ -860,9 +924,33 @@ class SlotNoDescription(seq.Sequence):
     slot: str
 @dc.dataclass
 class DomainSchema(seq.Sequence):
-    format = "\n\n## {domain}{slots}"
+    format = "\n\n## {domain}{slot_descriptions}"
     domain: str
-    slots: list[SlotDescription|SlotNoDescription]
+    slot_descriptions: list[SlotDescription|SlotNoDescription]
+@dc.dataclass
+class SchemaRevisions(seq.Sequence):
+    format = "# Revised Key Information Types{schema}{eot}"
+    schema: list[DomainSchema]
+    eot: str = '\n* <|eot_id|>'
+    @classmethod
+    def parse(cls, gen):
+        domain_chunks = gen.split("\n\n## ")
+        domain_schemas = []
+        for chunk in domain_chunks:
+            chunk: str
+            slot_descriptions = []
+            first_newline = chunk.find('\n')
+            if first_newline != -1:
+                domain, gen = chunk[:first_newline], chunk[first_newline+1:]
+                for slot_desc in gen.split('\n* '):
+                    try:
+                        slot, desc = slot_desc.split(': ', 1)
+                        if slot.startswith('* '):
+                            slot = slot[2:]
+                        slot_descriptions.append(SlotDescription(slot.strip(), desc.strip()))
+                    except Exception as e: continue
+                domain_schemas.append(DomainSchema(domain.strip(), slot_descriptions))
+        return SchemaRevisions(domain_schemas)
 @dc.dataclass
 class DsiPrompt(seq.Sequence):
     format = "# Key Information Types{schema}\n\n# Dialogue{turns}\n\n{instruction}"
@@ -1124,19 +1212,19 @@ if __name__ == '__main__':
 
     training_experiment = DsiExperiment(
         **projdict,
-        # model_to_load='meta-llama/Llama-3.2-1B-Instruct',
-        # base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
-        # physical_batch_size=4,
+        model_to_load='meta-llama/Llama-3.2-1B-Instruct',
+        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        physical_batch_size=4,
         # model_to_load='meta-llama/Llama-3.2-3B-Instruct',
         # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
         # physical_batch_size=2,
-        model_to_load='meta-llama/Llama-3.1-8B-Instruct',
-        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        physical_batch_size=1,
+        # model_to_load='meta-llama/Llama-3.1-8B-Instruct',
+        # base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
+        # physical_batch_size=1,
         quantization='nf4dq',
         max_seq_len=2048,
         max_new_tokens=1024,
-        device='cuda:5',
+        device='cuda:6',
         new_lora_rank=1,
         epochs=100,
         batch_size=8,
@@ -1152,15 +1240,16 @@ if __name__ == '__main__':
         infer_independently_per_dialogue = False,
         infer_independently_per_turn = False,
         infer_full_dialogue_schema_first = True,
-        infer_bad_slots_by_tracked_counts=True,
-        infer_bad_slots_by_min_count_per_dialogue_window=(2,10),
+        infer_revisions=True,
+        infer_bad_slots_by_tracked_counts=False,
+        infer_bad_slots_by_min_count_per_dialogue_window=None,
         max_schema_size=100,
         # train_data_path='data/d0t/dot_2',
         # train_data_path='data/sgd/train',
         train_data_path='data/DOTS/train', 
         # train_data_path='data/multiwoz24/dev_dials.json',       
         # train_revisions_path='ex/RKB_dc_100/0/dsi_dial_schemas.json',
-        train_revisions_path=None,
+        train_revisions_path='ex/RKB_dc_noise_take2/0/dsi_dial_schemas.json',
         train_num_turn_level_seqs_per_dialogue=1,
         train_max_imported_schemata=3,
         train_percent_empty_schema=0.2,
@@ -1223,20 +1312,16 @@ if __name__ == '__main__':
     # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_RKB-dc-noise_take2.out 2>&1 &
 
     evaluation_experiment = DsiExperiment(
-        experiment_name='RKB_dc_noise_take2',
-        model_to_load="ex/RogueKefBir_tebu/10000",
-        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
-        **mode_dc,
+        experiment_name='trial',
+        model_to_load="ex/trial/500",
+        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        **mode_ds,
         downsample_eval_dialogues=None,       # 3, 10, 30, 100, None
-        
+        infer_revisions=True,
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
-
-        eval_data_path='data/DOTS/train',
-
+        eval_data_path='data/DOTS/eval',
         device='cuda:7',
-
-
         **projdict,
         load_finetuned_lora=True,
         quantization='nf4dq',
@@ -1247,13 +1332,12 @@ if __name__ == '__main__':
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
         decoding_batch_size=4,
-
         max_schema_size=100,
         rng_seed=None,
         tag="eval"
     )
 
-    nvidia_smi()
+    # nvidia_smi()
 
     evaluation_experiment.run()
     # launch(evaluation_experiment)

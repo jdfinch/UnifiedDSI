@@ -71,29 +71,32 @@ class Llama3Sequence(Sequence):
     text: list[System|User|AssistantContext|AssistantResponse]
 
 
-def tokenize(
-    sequences: list[Sequence],
-    tokenizer,
-    label_span_types: list[tuple[str, str]|str] = None
-) -> list[list[tuple[str, int, int]]]:
-    if label_span_types is None:
-        label_span_types = []
-    tokens = tokenizer.batch_encode_plus([x.text for x in sequences],
-            return_offsets_mapping=True, add_special_tokens=False)
-    tokens_ids_labels_list = []
-    for sequence, tokens, offsets in zip(
-        sequences, tokens['input_ids'], tokens['offset_mapping']
-    ):
-        tokens_ids_labels = []
-        str_indices_of_labels: set = set()
-        for span_type in label_span_types:
-            for i, j in sequence.slots.get(span_type, ()):
-                str_indices_of_labels.update(range(i, j))
-        for token_id, (i, j) in zip(tokens, offsets):
-            if i in str_indices_of_labels or j-1 in str_indices_of_labels:
-                token_id_labels = (sequence.text[i:j], token_id, token_id)
-            else:
-                token_id_labels = (sequence.text[i:j], token_id, -100)
-            tokens_ids_labels.append(token_id_labels)
-        tokens_ids_labels_list.append(tokens_ids_labels)
-    return tokens_ids_labels_list
+
+
+class Sequences(list[Sequence]):
+
+    def __init__(self, items=(), label_spans: set[str | tuple[str, str]] = (), tokenizer = None):
+        super().__init__(items)
+        self.label_spans: set[str | tuple[str, str]] = set(label_spans)
+        self.tokenizer = tokenizer
+
+    def tokenize(self) -> list[list[tuple[str, int, int]]]:
+        tokens = self.tokenizer.batch_encode_plus([x.text for x in self],
+                return_offsets_mapping=True, add_special_tokens=False)
+        tokens_ids_labels_list = []
+        for sequence, tokens, offsets in zip(
+            self, tokens['input_ids'], tokens['offset_mapping']
+        ):
+            tokens_ids_labels = []
+            str_indices_of_labels: set = set()
+            for span_type in self.label_spans:
+                for i, j in sequence.slots.get(span_type, ()):
+                    str_indices_of_labels.update(range(i, j))
+            for token_id, (i, j) in zip(tokens, offsets):
+                if i in str_indices_of_labels or j-1 in str_indices_of_labels:
+                    token_id_labels = (sequence.text[i:j], token_id, token_id)
+                else:
+                    token_id_labels = (sequence.text[i:j], token_id, -100)
+                tokens_ids_labels.append(token_id_labels)
+            tokens_ids_labels_list.append(tokens_ids_labels)
+        return tokens_ids_labels_list
