@@ -1315,18 +1315,18 @@ if __name__ == '__main__':
     # -utdial-25
     # -nowindow
 
-    # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_RKB-dc-noise_take2.out 2>&1 &
+    # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_LDM-dc-noise.out 2>&1 &
 
     evaluation_experiment = DsiExperiment(
-        experiment_name='trial',
-        model_to_load="ex/trial/500",
-        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
-        **mode_ds,
+        experiment_name='LDM_dc_noise',
+        model_to_load="ex/LegendaryDarthMaul/1000",
+        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
+        **mode_dc,
         downsample_eval_dialogues=None,       # 3, 10, 30, 100, None
-        infer_revisions=True,
+        infer_revisions=False,
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
-        eval_data_path='data/DOTS/eval',
+        eval_data_path='data/sgd/train_wo_mwoz_doms',
         device='cuda:7',
         **projdict,
         load_finetuned_lora=True,
