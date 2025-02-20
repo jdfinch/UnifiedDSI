@@ -2,7 +2,7 @@ import pathlib as pl
 from pathlib import Path
 import os
 
-machine = 'tebuna'
+machine = 'h100'
 projdict = {}
 if machine == 'local':
     projdict = dict(
@@ -12,6 +12,12 @@ elif machine == 'tebuna':
     projdict = dict(
         root_path='/local/scratch/jdfinch',
         project_path='/local/scratch/jdfinch/2025/UnifiedDSI')
+    os.environ['HF_HOME'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
+    os.environ['HF_HUB_CACHE'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
+elif machine == 'h100':
+    projdict = dict(
+        root_path='/local/scratch/jdfinch',
+        project_path='/local/scratch/jdfinch/UnifiedDSI')
     os.environ['HF_HOME'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
     os.environ['HF_HUB_CACHE'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
 
@@ -1212,17 +1218,17 @@ if __name__ == '__main__':
 
     training_experiment = DsiExperiment(
         **projdict,
-        model_to_load='meta-llama/Llama-3.2-1B-Instruct',
-        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
-        physical_batch_size=4,
+        # model_to_load='meta-llama/Llama-3.2-1B-Instruct',
+        # base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        # physical_batch_size=4,
         # model_to_load='meta-llama/Llama-3.2-3B-Instruct',
         # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
         # physical_batch_size=2,
-        # model_to_load='meta-llama/Llama-3.1-8B-Instruct',
-        # base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        # physical_batch_size=1,
+        model_to_load='meta-llama/Llama-3.1-8B-Instruct',
+        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
+        physical_batch_size=1,
         quantization='nf4dq',
-        max_seq_len=2048,
+        max_seq_len=2048+1024,
         max_new_tokens=1024,
         device='cuda:6',
         new_lora_rank=1,
@@ -1339,10 +1345,10 @@ if __name__ == '__main__':
 
     # nvidia_smi()
 
-    evaluation_experiment.run()
+    # evaluation_experiment.run()
     # launch(evaluation_experiment)
 
-    # launch(training_experiment)
+    launch(training_experiment)
     # training_experiment.run()
 
     # calculate_metrics(
