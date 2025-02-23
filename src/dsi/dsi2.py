@@ -2,7 +2,7 @@ import pathlib as pl
 from pathlib import Path
 import os
 
-machine = 'tebuna'
+machine = 'h100'
 projdict = {}
 if machine == 'local':
     projdict = dict(
@@ -12,6 +12,12 @@ elif machine == 'tebuna':
     projdict = dict(
         root_path='/local/scratch/jdfinch',
         project_path='/local/scratch/jdfinch/2025/UnifiedDSI')
+    os.environ['HF_HOME'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
+    os.environ['HF_HUB_CACHE'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
+elif machine == 'h100':
+    projdict = dict(
+        root_path='/local/scratch/jdfinch',
+        project_path='/local/scratch/jdfinch/UnifiedDSI')
     os.environ['HF_HOME'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
     os.environ['HF_HUB_CACHE'] = str(pl.Path(projdict['root_path']).expanduser()/'.cache')
 
@@ -1400,7 +1406,7 @@ if __name__ == '__main__':
     evaluation_experiment.run()
     # launch(evaluation_experiment)
 
-    # launch(training_experiment)
+    launch(training_experiment)
     # training_experiment.run()
 
     # calculate_metrics(100
