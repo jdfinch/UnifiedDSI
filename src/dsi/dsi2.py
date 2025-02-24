@@ -75,6 +75,8 @@ class DsiExperiment:
     eval_data_path: str = 'data/multiwoz24/dev_dials.json'
     downsample_eval_dialogues: int|None = None
     steps_to_validate_on: tuple[int, ...] = (100, 200, 300)
+    eval_replicates: int = 1
+    eval_per_scenario: bool = False
 
     train_num_turn_level_seqs_per_dialogue: int = 2
     train_percent_full_schema: float = 0.2
@@ -259,6 +261,50 @@ class DsiExperiment:
             {**y.save(), 'predictions': x} for y, x in zip(data, generated)
         ], indent=2))
 
+    def _evaluate(self, data: dial.Dialogues, gold: dial.Dialogues):
+        avg_across_replicates = {}
+        replicates_results = {}
+        for i_replicate in range(self.eval_replicates):
+            if self.eval_per_scenario:
+                scenarios = {}
+                for dial_for_predict, d in zip(data, gold):
+                    domains = tuple(d.domains())
+                    scenarios.setdefault(domains, []).append((dial_for_predict, d))
+                scenario_results = {}
+                for scenario, pairs in scenarios.items():
+                    scenario_name = '__'.join(scenario)
+                    scenario_preds, scenario_golds = zip(*pairs)
+                    scenario_preds = dial.Dialogues(scenario_preds)
+                    scenario_golds = dial.Dialogues(scenario_golds)
+                    scenario_preds = self.infer_states(scenario_preds)
+                    for metrics in ...:
+                        metrics_name = metrics.__name__
+                        results = ... # evaluation
+                        results_path = self.iteration_path/f"r{i_replicate}/{metrics_name}.json"
+                        scenario_results.setdefault(metrics_name, {})[scenario_name] = results
+                avg_across_scenarios = {}
+                for metrics_name, results in scenario_results.items():
+                    avgs = DsiEvalResults()
+                    for metric in vars(avgs):
+                        if not any(metrictype in metric for metrictype in ('f1', 'prec', 'rec')): continue
+                        metric_results = [getattr(result, metric) for result in results.values()]
+                        metric_avg = sum(metric_results) / len(metric_results)
+                        setattr(avgs, metric, metric_avg)
+                    avg_across_scenarios[metrics_name] = avgs
+                for metrics_name, results in avg_across_scenarios.items():
+                    replicates_results.setdefault(metrics_name, []).append(results)
+            else:
+                ...
+        for metrics_name, results in replicates_results.items():
+            avgs = DsiEvalResults()
+            for metric in vars(avgs):
+                if not any(metrictype in metric for metrictype in ('f1', 'prec', 'rec')): continue
+                metric_results = [getattr(result, metric) for result in results]
+                metric_avg = sum(metric_results) / len(metric_results)
+                setattr(avgs, metric, metric_avg)
+            avg_across_replicates[metrics_name] = avgs
+        ...
+
 
     def evaluate(self, data: dial.Dialogues, gold: dial.Dialogues):
         pred_save_path = self.iteration_path
@@ -391,13 +437,13 @@ class DsiExperiment:
                                 print(f'Eliminated {slot} with history {window[slot]}')
                                 del window[slot]
                     if len(running_schema) > self.max_schema_size:
-                        if self.infer_bad_slots_by_tracked_counts:
+                        if self.infer_bad_slots_by_tracked_counts and not self.infer_revisions:
                             while len(running_schema) > self.max_schema_size:
-                                worst_slot = min(running_schema, key=self.streaming_discovery_counts.get)
+                                worst_slot = min(running_schema, key=self.streaming_discovery_counts.__getitem__)
                                 print(f'Eliminated {worst_slot} with count {self.streaming_discovery_counts[worst_slot]}')
                                 del self.streaming_discovery_counts[worst_slot]
                                 running_schema.pop(worst_slot, None)
-                        else: # simple fifo
+                        else: # simple filo
                             for slot,_ in zip(list(running_schema), range(len(running_schema) - self.max_schema_size)):
                                 running_schema.pop(slot, None) # remove from the beginning (least recently hit slot)
                                 print(f'Eliminated {slot} with count {self.streaming_discovery_counts[slot]}')
@@ -428,7 +474,7 @@ class DsiExperiment:
                     for context, state in zip(contexts, dialogue.states):
                         self.predict_last_turn([context])
                         state.update(context.states[-1])
-                        if self.infer_bad_slots_by_tracked_counts:
+                        if self.infer_bad_slots_by_tracked_counts and not self.infer_revisions:
                             while len(running_schema) > self.max_schema_size:
                                 worst_slot = min(running_schema, key=self.streaming_discovery_counts.get)
                                 print(f'Eliminated {worst_slot} with count {self.streaming_discovery_counts[worst_slot]}')
@@ -496,7 +542,7 @@ class DsiExperiment:
                     for context, state in zip(contexts, dialogue.states):
                         self.predict_last_turn([context])
                         state.update(context.states[-1])
-                        if self.infer_bad_slots_by_tracked_counts:
+                        if self.infer_bad_slots_by_tracked_counts and not self.infer_revisions:
                             while len(running_schema) > self.max_schema_size:
                                 worst_slot = min(running_schema, key=self.streaming_discovery_counts.get)
                                 print(f'Eliminated {worst_slot} with count {self.streaming_discovery_counts[worst_slot]}')
@@ -577,7 +623,7 @@ class DsiExperiment:
         prompts = self.preprocess_data_for_dsi(dialogues, predict_state=True)
         generations = self.generate([x.text for x in prompts])
         states = [State.parse(x) for x in generations]
-        for dialogue, state in tqdm(zip(dialogues, states), desc='Constructing last states'):
+        for dialogue, state in zip(dialogues, states):
             last_state = {}
             for domain in state.domain_states:
                 for slot_value in domain.slot_values:
@@ -1220,22 +1266,22 @@ if __name__ == '__main__':
 
     training_experiment = DsiExperiment(
         **projdict,
-        # model_to_load='meta-llama/Llama-3.2-1B-Instruct',
-        # base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
-        # physical_batch_size=4,
+        model_to_load='meta-llama/Llama-3.2-1B-Instruct',
+        base_model_repo_id='meta-llama/Llama-3.2-1B-Instruct',
+        physical_batch_size=4,
         # model_to_load='meta-llama/Llama-3.2-3B-Instruct',
         # base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
         # physical_batch_size=2,
-        model_to_load='meta-llama/Llama-3.1-8B-Instruct',
-        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        physical_batch_size=2,
+        # model_to_load='meta-llama/Llama-3.1-8B-Instruct',
+        # base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
+        # physical_batch_size=1,
         quantization='nf4dq',
         # max_seq_len=2048+1024,
         max_seq_len=2048,
         max_new_tokens=1024,
-        device='cuda:0',
+        device='cuda:7',
         new_lora_rank=1,
-        epochs=25,
+        epochs=10,
         batch_size=8,
         steps_to_validate_on=(100, 500, 1000, 2000, 5000, 10000, 15000, 20000, 30000),
         warmup=100,
@@ -1248,7 +1294,7 @@ if __name__ == '__main__':
         schema_mode='schema',
         infer_independently_per_dialogue = False,
         infer_independently_per_turn = False,
-        infer_full_dialogue_schema_first = False,
+        infer_full_dialogue_schema_first = True,
         infer_revisions=False,
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
@@ -1320,42 +1366,52 @@ if __name__ == '__main__':
     # -utdial-25
     # -nowindow
 
-    # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_LDM-dc-noise.out 2>&1 &
+    # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/8B_EL_revisions_ds.out 2>&1 &
+
+    # export PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src
+    # export CUDA_VISIBLE_DEVICES=6
+    # nohup python -u src/dsi/dsi2.py > ex/8B_FM_us_rev_mwoz.out 2>&1 &
+
+    data = 'mwoz'
+    modelname = 'FieryMace_h100'
+    modelac = ''.join([c for c in modelname if c.isupper()])
+    suffix = 'us_rev'
     evaluation_experiment = DsiExperiment(
-        experiment_name='FI_dc_noise',
-        model_to_load="ex/FormidableIridonia_h100/1000",
+
+        experiment_name=f'{modelac}_{suffix}_{data}',
+        model_to_load=f"ex/{modelname}/30000",
         base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        **mode_dc,
-        downsample_eval_dialogues=None,       # 3, 10, 30, 100, None
-        infer_revisions=False,
-        infer_bad_slots_by_tracked_counts=False,
+        **mode_us, # <- inference settings
+        infer_revisions=True,
+        infer_bad_slots_by_tracked_counts=True,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
-        eval_data_path='data/sgd/noise.json',
+
+        downsample_eval_dialogues=None,
+        # eval_data_path='data/DOTS/eval_corrected',
+        eval_data_path='data/multiwoz24/test_dials.json',
         device='cuda:0',
         **projdict,
         load_finetuned_lora=True,
         quantization='nf4dq',
-        max_seq_len=2048,
-        max_new_tokens=1024,
+        max_seq_len=2048*2,
+        max_new_tokens=1024*2,
         new_lora_rank=None,
         epochs=0,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
-        decoding_batch_size=32,
+        decoding_batch_size=1,
         max_schema_size=100,
         rng_seed=None,
         tag="sgd noise"
     )
 
-    # nvidia_smi()
-
-    # evaluation_experiment.run()
-    launch(evaluation_experiment)
+    evaluation_experiment.run()
+    # launch(evaluation_experiment)
 
     # launch(training_experiment)
     # training_experiment.run()
 
-    # calculate_metrics(
+    # calculate_metrics(100
     #     'ex/DashingZuckuss_tebu/0/dsi_dial_states.json',
     #     dial.multiwoz_to_dialogues('data/multiwoz24/dev_dials.json')
     # )

@@ -1,0 +1,93 @@
+
+# TACL 2025 
+
+
+# Intro
+
+## Task background
+
+* Slot Schema Induction overview
+    * discover slots from unlabeled dialogue data
+
+### Impacts
+* structural and problem analysis
+* TOD development from H-H chat logs
+* policy control from states
+
+### Scientific Merits
+* ontology creation/extension
+* LLM ability to induce structure as text generation
+    * traditionally, clustering is used
+
+## Contributions
+
+* novel approach to slot induction using LLM text generation, no clustering
+    * take advantage of LLM intelligence for schema induction decisions
+        * clustering relies on overly-compressed dense vectors representing slot values
+        * no density-based sensitivity
+        * can work with even 1 dialogue
+    * allows a streaming approach
+        * incremental online updates to adapt to changing data
+        * minimal overhead to recompute slot schema
+        * quality could scale gracefully as data grows
+* DOTS training dataset with diverse schema-consistent dialogues
+    * MultiWOZ and SGD have diversity limitations
+    * d0t has a schema inconsistency issue
+* comparison and validation of new evaluation metrics for schema induction
+    * previous evaluation metrics are deeply flawed
+* new DOTS evaluation dataset generated with human guidance and corrections
+    * expands diversity of evaluation
+    * MultiWOZ and SGD schemas are known to existing base models like GPT, Llama
+* experiment results evaluate the impact of
+    * LLM repeated discoveries as a metric of slot induction confidence
+    * LLM ability to revise partial schemas
+    * comparison to clustering methods
+    * impact of dialogue data size on schema indcution
+* publicly release models and code
+    * DOTS train and corrected eval data
+    * new state of the art schema induction model as llama-8B finetune
+
+
+# Related Work
+
+## Slot Schema Induction
+... just iterate through them
+* all are clustering based
+* Finch et al 2024 current SoTA and uses LLM for sv candidate discovery
+* previous evaluation metrics are flawed
+    * precision doesn't punish redundant induced slots
+
+## Evaluation Benchmark Leakage
+* ?
+
+## Data Generation
+
+### for Symbolic Distillation
+* Finch and Choi 2024
+* ?
+
+### for Evaluation Data
+* ?
+
+
+# Approach
+
+* task formulation as citation
+* overview summary
+
+## Joint DST and SSE (Slot Schema Expansion)
+* seq-to-seq formulation
+* input: dialogue context, partial schema
+* output: slot-values, new slot descriptions
+* variants:
+    * predict state updates, as in Finch et al 2024
+    * predict full states, similar to DST models
+    * predict full states only at the end of tasks
+        * allows model to discover new slots with full task context
+        * simulate task-end as the end of the dialogue in this work
+        
+## Schema Revision
+
+### LLM-based schema revision
+* inputs: 
+
