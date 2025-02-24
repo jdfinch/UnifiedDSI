@@ -1,8 +1,9 @@
 import pathlib as pl
 from pathlib import Path
 import os
+import socket as sk
 
-machine = 'h100'
+machine = sk.gethostname()
 projdict = {}
 if machine == 'local':
     projdict = dict(
@@ -36,7 +37,6 @@ import torch as pt
 import bitsandbytes as bnb
 import setproctitle as spt
 from tqdm import tqdm
-from dsi.mwoz24 import DsiExample, DsiData, load_mwoz_examples, eval_dsi
 import dsi.dialogue as dial
 import dsi.sequence as seq
 import datetime as dt
@@ -259,29 +259,56 @@ class DsiExperiment:
             {**y.save(), 'predictions': x} for y, x in zip(data, generated)
         ], indent=2))
 
-    def _evaluate(self, data: dial.Dialogues, gold: dial.Dialogues):
+    def evaluate(self, data: dial.Dialogues, gold: dial.Dialogues):
+        pred_save_path = Path(self.iteration_path)
+        self.iteration_path.mkdir(parents=True, exist_ok=True)
+        (self.iteration_path/'experiment.json').write_text(json.dumps(
+            {f.name: getattr(self, f.name) for f in dc.fields(self)}, indent=2)) # noqa
+        eval_methods = [
+            exact_match_evaluation,
+            turn_vector_match_evaluation
+        ]
+        orig_data, orig_gold = data, gold
         avg_across_replicates = {}
         replicates_results = {}
         for i_replicate in range(self.eval_replicates):
-            if self.eval_per_scenario:
+            data = cp.deepcopy(orig_data)
+            gold = cp.deepcopy(orig_gold)
+            order = list(range(len(gold)))
+            rng.shuffle(order)
+            data = dial.Dialogues(data[i] for i in order)
+            gold = dial.Dialogues(gold[i] for i in order)
+            if not self.eval_per_scenario:
+                self.infer_states(data, pred_save_path=pred_save_path/f'r{i_replicate}')
+                for metrics in eval_methods:
+                    metrics_name = metrics.__name__
+                    results = metrics(gold, data)
+                    results_path = self.iteration_path/f"r{i_replicate}/{metrics_name}.json"
+                    results_path.parent.mkdir(parents=True, exist_ok=True)
+                    results_path.write_text(json.dumps(vars(results), indent=2))
+                    replicates_results.setdefault(metrics_name, []).append(results)
+            else:
                 scenarios = {}
                 for dial_for_predict, d in zip(data, gold):
                     domains = tuple(d.domains())
                     scenarios.setdefault(domains, []).append((dial_for_predict, d))
                 scenario_results = {}
                 for scenario, pairs in scenarios.items():
-                    scenario_name = '__'.join(scenario)
+                    scenario_name = '__'.join(x.replace(' ', '_') for x in scenario)
                     scenario_preds, scenario_golds = zip(*pairs)
                     scenario_preds = dial.Dialogues(scenario_preds)
                     scenario_golds = dial.Dialogues(scenario_golds)
-                    scenario_preds = self.infer_states(scenario_preds)
-                    for metrics in ...:
+                    scenario_preds = self.infer_states(scenario_preds, pred_save_path=pred_save_path/f"r{i_replicate}/{scenario_name}")
+                    for metrics in eval_methods:
                         metrics_name = metrics.__name__
-                        results = ... # evaluation
-                        results_path = self.iteration_path/f"r{i_replicate}/{metrics_name}.json"
+                        results = metrics(scenario_golds, scenario_preds)
+                        results_path = self.iteration_path/f"r{i_replicate}/{scenario_name}/{metrics_name}.json"
+                        results_path.parent.mkdir(parents=True, exist_ok=True)
+                        results_path.write_text(json.dumps(vars(results), indent=2))
                         scenario_results.setdefault(metrics_name, {})[scenario_name] = results
                 avg_across_scenarios = {}
                 for metrics_name, results in scenario_results.items():
+                    scenario_results_path = self.iteration_path/f"r{i_replicate}/{metrics_name}.json"
                     avgs = DsiEvalResults()
                     for metric in vars(avgs):
                         if not any(metrictype in metric for metrictype in ('f1', 'prec', 'rec')): continue
@@ -289,11 +316,12 @@ class DsiExperiment:
                         metric_avg = sum(metric_results) / len(metric_results)
                         setattr(avgs, metric, metric_avg)
                     avg_across_scenarios[metrics_name] = avgs
+                    scenario_results_path.parent.mkdir(parents=True, exist_ok=True)
+                    scenario_results_path.write_text(json.dumps(vars(avgs), indent=2))
                 for metrics_name, results in avg_across_scenarios.items():
                     replicates_results.setdefault(metrics_name, []).append(results)
-            else:
-                ...
         for metrics_name, results in replicates_results.items():
+            results_path = self.iteration_path/f"{metrics_name}.json"
             avgs = DsiEvalResults()
             for metric in vars(avgs):
                 if not any(metrictype in metric for metrictype in ('f1', 'prec', 'rec')): continue
@@ -301,10 +329,12 @@ class DsiExperiment:
                 metric_avg = sum(metric_results) / len(metric_results)
                 setattr(avgs, metric, metric_avg)
             avg_across_replicates[metrics_name] = avgs
-        ...
+            results_path.parent.mkdir(parents=True, exist_ok=True)
+            results_path.write_text(json.dumps(vars(avgs), indent=2))
+        return
 
 
-    def evaluate(self, data: dial.Dialogues, gold: dial.Dialogues):
+    def _evaluate(self, data: dial.Dialogues, gold: dial.Dialogues):
         pred_save_path = self.iteration_path
         self.iteration_path.mkdir(parents=True, exist_ok=True)
         (self.iteration_path/'experiment.json').write_text(json.dumps(
@@ -392,6 +422,7 @@ class DsiExperiment:
 
     def infer_states(self, dialogues: dial.Dialogues, pred_save_path=None) -> dial.Dialogues:
         """Predict the dialogue state every turn (This is the top level!)"""
+        if pred_save_path: Path(pred_save_path).mkdir(parents=True, exist_ok=True)
         clusterer = cl.Clusterer(
             format=self.cluster_format,
             min_samples=self.cluster_min_samples,
@@ -1061,15 +1092,15 @@ class DiscoveryRevision(seq.Sequence):
 
 @dc.dataclass
 class DsiEvalResults:
-    slot_precision: float = None
-    slot_recall: float = None
-    slot_f1: float = None
-    value_precision: float = None
-    value_recall: float = None
-    value_f1: float = None
-    macro_value_precision: float = None
-    macro_value_recall: float = None
-    macro_value_f1: float = None
+    slot_precision: float = 0.0
+    slot_recall: float = 0.0
+    slot_f1: float = 0.0
+    value_precision: float = 0.0
+    value_recall: float = 0.0
+    value_f1: float = 0.0
+    macro_value_precision: float = 0.0
+    macro_value_recall: float = 0.0
+    macro_value_f1: float = 0.0
     matching: dict[str, str] = None
     matcher: str = 'turn vector'
 
@@ -1133,7 +1164,10 @@ def exact_match_evaluation(
             slot_recall=len(set(slot_matching.values()))/len(gold_slot_counts),
             value_precision=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(pred_slot_counts[pred] for pred in slot_matching),
             value_recall=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(gold_slot_counts[gold] for gold in slot_matching.values()),
-            macro_value_precision=sum(overlap_counts[p][g]/pred_slot_counts[p] for p, g in slot_matching.items())/len(slot_matching),
+            macro_value_precision=sum(
+                overlap_counts[p][g]/pred_slot_counts[p] if pred_slot_counts[p] else 0.0
+                for p, g in slot_matching.items()
+            )/len(slot_matching),
             macro_value_recall=sum(overlap_counts[p][g]/gold_slot_counts[g] for p, g in slot_matching.items())/len(slot_matching),
             matching=savable_slot_matching,
             matcher='exact string')
@@ -1181,7 +1215,10 @@ def turn_vector_match_evaluation(
             slot_recall=len(set(slot_matching.values()))/len(gold_slot_counts),
             value_precision=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(pred_slot_counts[pred] for pred in slot_matching),
             value_recall=sum(overlap_counts[p][g] for p,g in slot_matching.items())/sum(gold_slot_counts[gold] for gold in slot_matching.values()),
-            macro_value_precision=sum(overlap_counts[p][g]/pred_slot_counts[p] for p, g in slot_matching.items())/len(slot_matching),
+            macro_value_precision=sum(
+                overlap_counts[p][g]/pred_slot_counts[p] if pred_slot_counts[p] else 0.0 
+                for p, g in slot_matching.items()
+            )/len(slot_matching),
             macro_value_recall=sum(overlap_counts[p][g]/gold_slot_counts[g] for p, g in slot_matching.items())/len(slot_matching),
             matching=savable_slot_matching,
             matcher='turn vector')
@@ -1204,8 +1241,6 @@ def calculate_metrics(
     print(exact_match_json)
     return exact_match, turn_vector
 
-
-import socket as sk
 
 def get_new_ex_name():
     experiments_path = pl.Path('ex')
@@ -1367,26 +1402,28 @@ if __name__ == '__main__':
     # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/8B_EL_revisions_ds.out 2>&1 &
 
     # export PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src
-    # export CUDA_VISIBLE_DEVICES=6
-    # nohup python -u src/dsi/dsi2.py > ex/8B_FM_us_rev_mwoz.out 2>&1 &
+    # export CUDA_VISIBLE_DEVICES=7
+    # nohup python -u src/dsi/dsi2.py > ex/8B_EI_uc_dots.out 2>&1 &
 
-    data = 'mwoz'
-    modelname = 'FieryMace_h100'
+    data = 'DOTS'
+    modelname = 'EuphoricIthor_tebu'
     modelac = ''.join([c for c in modelname if c.isupper()])
-    suffix = 'us_rev'
+    suffix = 'uc'
     evaluation_experiment = DsiExperiment(
 
         experiment_name=f'{modelac}_{suffix}_{data}',
         model_to_load=f"ex/{modelname}/30000",
         base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        **mode_us, # <- inference settings
-        infer_revisions=True,
-        infer_bad_slots_by_tracked_counts=True,
+        **mode_uc, # <- inference settings
+        infer_revisions=False,
+        infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
 
         downsample_eval_dialogues=None,
-        # eval_data_path='data/DOTS/eval_corrected',
-        eval_data_path='data/multiwoz24/test_dials.json',
+        eval_data_path='data/DOTS/eval_final_corrected',
+        eval_replicates=3,
+        eval_per_scenario=True,
+        # eval_data_path='data/multiwoz24/test_dials.json',
         device='cuda:0',
         **projdict,
         load_finetuned_lora=True,
@@ -1403,10 +1440,12 @@ if __name__ == '__main__':
         tag="eval"
     )
 
+    # dial.dot2_to_dialogues(evaluation_experiment.eval_data_path)
+
     evaluation_experiment.run()
     # launch(evaluation_experiment)
 
-    launch(training_experiment)
+    # launch(training_experiment)
     # training_experiment.run()
 
     # calculate_metrics(100
