@@ -565,7 +565,8 @@ if __name__ == '__main__':
     # dialogues[241].display_text()
     # dialogues[0].display_final_schema()
 
-    # sgd_valid = sgd_to_dialogues('data/sgd/train')
+    sgd_valid = sgd_to_dialogues('data/sgd/train', filter_out_domains=())
+    sgd_valid.save('data/sgd/noise.json')
 
     # predictions = Dialogues.load('ex/DashingZuckuss_tebu/0/dsi_dial_schema_stream.json')
     # example = rng.choice(predictions)
@@ -574,10 +575,12 @@ if __name__ == '__main__':
     # data_dir = Path('data') / 'utdial'
     # reparse_descriptions(data_dir)
 
-    utdial: Dialogues = dot2_to_dialogues('data/utdial')
-    for dialogue in utdial:
-        dialogue.display_state_updates()
-        print()
-        print('-'*40)
-        print()
+    # utdial: Dialogues = dot2_to_dialogues('data/utdial')
+    # for dialogue in utdial:
+    #     dialogue.display_state_updates()
+    #     print()
+    #     print('-'*40)
+    #     print()
+
+
 

@@ -185,10 +185,12 @@ class DsiExperiment:
         self.datetime = dt.datetime.now().isoformat()
         self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
         self.load_model()
-        if 'woz' in self.eval_data_path:
+        if 'woz' in self.eval_data_path and 'wo_mwoz' not in self.eval_data_path:
             evaluation_data: dial.Dialogues = dial.multiwoz_to_dialogues(self.eval_data_path)
-        else:
+        elif 'd0t' in self.eval_data_path or 'DOTS' in self.eval_data_path:
             evaluation_data: dial.Dialogues = dial.dot2_to_dialogues(self.eval_data_path)
+        else:
+            evaluation_data: dial.Dialogues = dial.Dialogues.load(self.eval_data_path)
         if self.downsample_eval_dialogues:
             evaluation_data = evaluation_data.downsample(self.downsample_eval_dialogues)
         gold_data = cp.deepcopy(evaluation_data)
@@ -1323,7 +1325,7 @@ if __name__ == '__main__':
         decoding_beams=1,
         decoding_batch_size=4,
         downsample_eval_dialogues=10,
-        state_mode='states',
+        state_mode='updates',
         schema_mode='schema',
         infer_independently_per_dialogue = False,
         infer_independently_per_turn = False,
@@ -1437,7 +1439,7 @@ if __name__ == '__main__':
         decoding_batch_size=1,
         max_schema_size=100,
         rng_seed=None,
-        tag="eval"
+        tag="sgd noise"
     )
 
     # dial.dot2_to_dialogues(evaluation_experiment.eval_data_path)
