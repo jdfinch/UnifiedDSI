@@ -183,10 +183,12 @@ class DsiExperiment:
         self.datetime = dt.datetime.now().isoformat()
         self.tokenizer = hf.AutoTokenizer.from_pretrained(self.base_model_repo_id)
         self.load_model()
-        if 'woz' in self.eval_data_path:
+        if 'woz' in self.eval_data_path and 'wo_mwoz' not in self.eval_data_path:
             evaluation_data: dial.Dialogues = dial.multiwoz_to_dialogues(self.eval_data_path)
-        else:
+        elif 'd0t' in self.eval_data_path or 'DOTS' in self.eval_data_path:
             evaluation_data: dial.Dialogues = dial.dot2_to_dialogues(self.eval_data_path)
+        else:
+            evaluation_data: dial.Dialogues = dial.Dialogues.load(self.eval_data_path)
         if self.downsample_eval_dialogues:
             evaluation_data = evaluation_data.downsample(self.downsample_eval_dialogues)
         gold_data = cp.deepcopy(evaluation_data)
@@ -1226,13 +1228,14 @@ if __name__ == '__main__':
         # physical_batch_size=2,
         model_to_load='meta-llama/Llama-3.1-8B-Instruct',
         base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        physical_batch_size=1,
+        physical_batch_size=2,
         quantization='nf4dq',
-        max_seq_len=2048+1024,
+        # max_seq_len=2048+1024,
+        max_seq_len=2048,
         max_new_tokens=1024,
-        device='cuda:6',
+        device='cuda:0',
         new_lora_rank=1,
-        epochs=100,
+        epochs=25,
         batch_size=8,
         steps_to_validate_on=(100, 500, 1000, 2000, 5000, 10000, 15000, 20000, 30000),
         warmup=100,
@@ -1241,21 +1244,23 @@ if __name__ == '__main__':
         decoding_beams=1,
         decoding_batch_size=4,
         downsample_eval_dialogues=10,
-        state_mode='states',
+        state_mode='updates',
         schema_mode='schema',
         infer_independently_per_dialogue = False,
         infer_independently_per_turn = False,
-        infer_full_dialogue_schema_first = True,
-        infer_revisions=True,
+        infer_full_dialogue_schema_first = False,
+        infer_revisions=False,
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
         max_schema_size=100,
         # train_data_path='data/d0t/dot_2',
-        # train_data_path='data/sgd/train',
-        train_data_path='data/DOTS/train', 
+        train_data_path='data/sgd/train',
+        train_apply_sgdx=True,
+        train_filter_sgd_domains=(),
+        # train_data_path='data/sgd/train_wo_mwoz_doms', 
         # train_data_path='data/multiwoz24/dev_dials.json',       
         # train_revisions_path='ex/RKB_dc_100/0/dsi_dial_schemas.json',
-        train_revisions_path='ex/RKB_dc_noise_take2/0/dsi_dial_schemas.json',
+        # train_revisions_path='ex/DaringMace_h100/0/dsi_dial_schemas.json',
         train_num_turn_level_seqs_per_dialogue=1,
         train_max_imported_schemata=3,
         train_percent_empty_schema=0.2,
@@ -1316,18 +1321,17 @@ if __name__ == '__main__':
     # -nowindow
 
     # nohup env PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src python -u src/dsi/dsi2.py > ex/3B_LDM-dc-noise.out 2>&1 &
-
     evaluation_experiment = DsiExperiment(
-        experiment_name='LDM_dc_noise',
-        model_to_load="ex/LegendaryDarthMaul/1000",
-        base_model_repo_id='meta-llama/Llama-3.2-3B-Instruct',
+        experiment_name='FI_dc_noise',
+        model_to_load="ex/FormidableIridonia_h100/1000",
+        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
         **mode_dc,
         downsample_eval_dialogues=None,       # 3, 10, 30, 100, None
         infer_revisions=False,
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
-        eval_data_path='data/sgd/train_wo_mwoz_doms',
-        device='cuda:7',
+        eval_data_path='data/sgd/noise.json',
+        device='cuda:0',
         **projdict,
         load_finetuned_lora=True,
         quantization='nf4dq',
@@ -1337,18 +1341,18 @@ if __name__ == '__main__':
         epochs=0,
         decoding_repetition_penalty=1.2,
         decoding_beams=1,
-        decoding_batch_size=4,
+        decoding_batch_size=32,
         max_schema_size=100,
         rng_seed=None,
-        tag="eval"
+        tag="sgd noise"
     )
 
     # nvidia_smi()
 
     # evaluation_experiment.run()
-    # launch(evaluation_experiment)
+    launch(evaluation_experiment)
 
-    launch(training_experiment)
+    # launch(training_experiment)
     # training_experiment.run()
 
     # calculate_metrics(

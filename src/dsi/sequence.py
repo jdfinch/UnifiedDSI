@@ -81,6 +81,7 @@ class Sequences(list[Sequence]):
         self.tokenizer = tokenizer
 
     def tokenize(self) -> list[list[tuple[str, int, int]]]:
+        if not self: return []
         tokens = self.tokenizer.batch_encode_plus([x.text for x in self],
                 return_offsets_mapping=True, add_special_tokens=False)
         tokens_ids_labels_list = []
