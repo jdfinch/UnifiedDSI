@@ -1405,19 +1405,19 @@ if __name__ == '__main__':
 
     # export PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src
     # export CUDA_VISIBLE_DEVICES=7
-    # nohup python -u src/dsi/dsi2.py > ex/8B_EI_uc_dots.out 2>&1 &
+    # nohup python -u src/dsi/dsi2.py > ex/8B_DD_ds_rev_dots.out 2>&1 &
 
     data = 'DOTS'
-    modelname = 'EuphoricIthor_tebu'
+    modelname = 'DaringDewback_h100'
     modelac = ''.join([c for c in modelname if c.isupper()])
-    suffix = 'uc'
+    suffix = 'ds'
     evaluation_experiment = DsiExperiment(
 
         experiment_name=f'{modelac}_{suffix}_{data}',
-        model_to_load=f"ex/{modelname}/30000",
+        model_to_load=f"ex/{modelname}/10000",
         base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        **mode_uc, # <- inference settings
-        infer_revisions=False,
+        **mode_ds, # <- inference settings
+        infer_revisions=True,
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
 
