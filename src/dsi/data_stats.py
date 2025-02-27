@@ -47,6 +47,7 @@ def compute_correction_stats(originals: dial.Dialogues, correcteds: dial.Dialogu
 Stats of DOTS Eval Corrections:
 
 Turn IOU: 0.7859820515733272
+Turn Acc: 0.9278231987736331
 Slot Value IOU: 0.8702420254050154
 Percent Good Slot Values: 0.9569004196468632
 '''    

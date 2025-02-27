@@ -1,7 +1,8 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 
-from cuml.cluster import HDBSCAN
+# from cuml.cluster import HDBSCAN
+from sklearn.cluster import HDBSCAN
 from cuml.preprocessing import normalize
 import dataclasses as dc
 import ezpyzy as ez
@@ -59,7 +60,7 @@ class Clusterer:
     def gridsearch(self, embeddings, strings, original):
         param_grid = dict(
             min_cluster_size = [2, 5, 10, 15, 20, 40],
-            min_samples = [1, 2, 3, 4, 5, 10, 15, 20, 30],
+            min_samples = [1, 2, 4, 10, 15, 20, 30],
             cluster_selection_epsilon = [0.0, 0.025, 0.05, 0.1, 0.2, 0.3],
         )
         param_combinations = [dict(zip(param_grid.keys(), values)) for values in product(*param_grid.values())]
@@ -68,6 +69,8 @@ class Clusterer:
         best_params = None
         for params in tqdm(param_combinations, desc='Grid Search Clustering'):
             hdbscan = HDBSCAN(**params, metric=self.metric)
+            if params['min_samples'] > len(embeddings):
+                continue
             labels = hdbscan.fit_predict(embeddings)
             # Filter noise points (-1 label) before evaluating clustering performance
             valid_labels = [l for l in labels if l != -1]
