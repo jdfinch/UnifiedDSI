@@ -1,3 +1,5 @@
+import os
+print(os.getcwd())
 from dot import system, user, assistant, gpt
 import dataclasses as dc
 import inspect as ins
@@ -92,7 +94,7 @@ class GenDialogueSim(Generate):
 f"""
 {self.py_database_schema}
 
-We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {self.criteria}, etc. Above is a dataclass we will use to represent each {self.item_type}. Create a global variable that is a list of {self.item_type} examples using the above dataclass to represent the knowledge or data that {self.recommender} has access to. If possible, include at least 10 examples to provide different cases for the simulation. Do not print anything.
+We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, the {self.searcher} needs help diagnosing for {self.item_type} based on symptoms like {self.criteria}, etc. Above is a dataclass we will use to represent each {self.item_type}. Create a global variable that is a list of {self.item_type} examples using the above dataclass to represent the knowledge or data that {self.recommender} has access to. If possible, include 2 to 5 examples to provide different cases for the simulation. There should always be a healthy human case as well in the simulation. Do not print anything.
 """
             )
         ], temperature=0.5)
@@ -122,7 +124,7 @@ We are trying to simulate the following conversation scenario: {self.dialogue.rs
 f"""
 {self.py_database_schema}
 
-We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, the {self.searcher} needs help searching for a {self.item_type} based on preferences and criteria like {', '.join(self.criteria)}, etc. Above is a dataclass we will use to represent each {self.item_type}. Here is the actual {self.item_type} the {self.searcher} is looking for:
+We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, the {self.searcher} needs help diagnosing for {self.item_type} based on criteria like {', '.join(self.criteria)}, etc. Above is a dataclass we will use to represent each {self.item_type}. Here is the actual {self.item_type} the {self.searcher} is looking for:
 
  ```python
  f"target_{type(self.goal_item).__name__.lower()} = {self.text_goal_item}"
@@ -169,7 +171,7 @@ Create a global variable that is a list of {self.item_type} examples using the a
 f"""
 {self.py_preference_schema}
 
-We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, you, the {self.searcher}, need help searching for a specific {self.item_type}. Using the above dataclass to represent the preferences of the {self.searcher}, instantiate a {self.preference_schema.__name__} object like `preferences = {self.preference_schema.__name__}(...)` to represent what the {self.searcher} might be looking for that will match the below search target {self.database_schema.__name__}:
+We are trying to simulate the following conversation scenario: {self.dialogue.rstrip('.')}. At this point in the conversation, you, the {self.searcher}, need help diagnosing a specific {self.item_type}. Using the above dataclass to represent the preferences of the {self.searcher}, instantiate a {self.preference_schema.__name__} object like `preferences = {self.preference_schema.__name__}(...)` to represent what the {self.searcher} might be experiencing that will match the below search target {self.database_schema.__name__}:
 
 {py_database_schema_and_target}
 """
@@ -205,18 +207,18 @@ We are trying to simulate the following conversation scenario: {self.dialogue.rs
             task_reiteration = [
                 assistant(
 f"""
-(now I need to move on to the next part of the conversation where I look for a {self.item_type})
-"""
-                ),
-                user(
-f"""
-Continue the conversation as the {self.searcher} that we have been having, but now ask for my help to look for a suitable {self.item_type} based on these criteria:
-
-{self.text_preferences} 
-
-Your responses should be extremely short and spoken out loud. Only share or request one or two pieces of information at a time. It is also OK to just acknowledge the user to allow them to express themselves. Go ahead and resume the next part of our conversation now. Do NOT say hi: we are already in the middle of talking! So make sure you continue our conversation naturally by responding to the last thing I said: "{last_turn}"
+(now I need to move on to the next part of the conversation where I diagnose for a {self.item_type})
 """
                 )
+#                 user(
+# f"""
+# Continue the conversation as the {self.searcher} that we have been having, but now ask for my help to look for a suitable {self.item_type} based on these criteria:
+
+# {self.text_preferences} 
+
+# Your responses should be extremely short and spoken out loud. Only share or request one or two pieces of information at a time. It is also OK to just acknowledge the user to allow them to express themselves. Go ahead and resume the next part of our conversation now. Do NOT say hi: we are already in the middle of talking! So make sure you continue our conversation naturally by responding to the last thing I said: "{last_turn}"
+# """
+#                 )
             ]
         else:
             task_reiteration = []
@@ -227,13 +229,12 @@ Scenario: {self.dialogue}
 
 {self.py_preference_schema}
 
-You are the {self.searcher} and the user is the {self.recommender}. Have a casual, everyday chat with the {self.recommender} in order to find a suitable {self.item_type} based on these criteria:
+You are the {self.searcher} and the user is the {self.recommender}. Have a medical chat with the {self.recommender} in order to diagnose {self.item_type} based on these symptoms:
 
 {self.text_preferences}
 
-The conversation is complete once you, the {self.searcher}, have finalized your choice of {self.item_type} based on the above criteria. Find a suitable {self.item_type} by sharing your preferences with the {self.recommender}. You are allowed to change your preferences ONLY if you are sure that you cannot find a {self.item_type} that meets all of your requirements. 
+The conversation is complete once you, the {self.searcher}, have finalized your choice of diagnoses based on the above criteria. Do not give a diagnosis until you have a high degree of certainty in its accuracy. Find a suitable diagnoses by sharing your thoughts with the {self.recommender}. You are allowed to change your diagnoses ONLY if you are sure that you cannot find a {self.item_type} that meets all of your requirements. 
 
-Respond in one line only (one-line responses). Your responses should be extremely short and spoken out loud. Do NOT share all of your preferences at once: only share or request one or two pieces of information at a time. It is also OK to just answer the {self.recommender}'s questions in order to allow them to talk more.
 """
             )
         ] + list(reversed([
@@ -260,7 +261,7 @@ Participate in the above dialogue scenario as the {self.searcher} until the user
 f"""
 {self.py_preference_schema}
 
-Translate what has been said during the conversation so far about your {self.item_type} preferences/selection into a python object by instantiating the above dataclass, like:
+Translate what has been said during the conversation so far about {self.item_type} preferences/selection into a python object by instantiating the above dataclass, like:
 
 ```python
 shared_preferences = {self.preference_schema.__name__}(
@@ -296,11 +297,11 @@ Scenario: {self.dialogue}
 
 {self.py_database_schema}
 
-You are the {self.recommender} and the user is the {self.searcher}. Have a casual, everyday chat with the user in order to help them find a suitable {self.item_type} for the {self.searcher} out of the following items:
+You are {self.recommender} and the user is {self.searcher}. Have a medical, chat with the user in order to help them find a suitable diagnosis out of the following items:
 
 {self.text_database}
 
-Do not lie to the {self.searcher} or misrepresent any of the information in the above list. Since the above list is all you have access to, ask the {self.searcher} for the specific characteristics they are looking for to narrow down the search as you chat. If the {self.searcher} has preferences that conflict with your recommendations, try to find an alternative {self.item_type} that meets their needs. Once the user confirms their choice, the conversation is over.
+Do not lie to the {self.searcher} or misrepresent any of the information in the above list. Since the above list is all you have access to, ask the {self.searcher} for the specific characteristics they are looking for to narrow down the search as you chat. If the {self.searcher} makes assumptions that conflict with your symptoms, try to find an alternative {self.item_type}. Once the user confirms their choice, the conversation is over.
 
 Respond in one line only (one-line responses). Your responses should be extremely short and spoken out loud. Only share or ask one or two pieces of information at a time. It is also OK to just answer the {self.searcher}'s questions in order to allow them to talk more.
 """
@@ -311,38 +312,46 @@ Respond in one line only (one-line responses). Your responses should be extremel
         self.context.append(response)
         return response
 
+#     def gen_task_completion_status(self):
+#         dialogue_text = '\n'.join(list(reversed([
+#             f"{role}: {text}" for role, text in zip(it.cycle((self.recommender, self.searcher)), reversed(self.context))
+#         ])))
+#         response = gpt(
+#             [system(
+# f"""
+# You are a helpful medical assistant.
+# """
+#             ),
+#             user(
+# f"""
+# # Dialogue
+# {dialogue_text}
+
+# {self.dialogue.rstrip('.')} (above). During the conversation, the {self.searcher} needs help diagnosing for a particular disease in this case {self.item_type}. Is the above Dialogue:
+
+# (1) Complete: the {self.searcher} has made and confirmed their choice of diagnosis and they are about to say goodbye
+# (2) Incomplete: the {self.searcher} still needs to confirm their final choice of diagnosis, or are still looking for more information
+# (3) Failed: the {self.searcher} and {self.recommender} are saying goodbye to each other but no diagnosis was chosen by the {self.searcher}
+
+# Please answer one of [Complete/Incomplete/Failed]
+# """
+#             )
+#         ], temperature=0.0)
+#         status: T.Literal['incomplete', 'complete', 'failed'] = 'incomplete'
+#         if response.startswith('Complete'):
+#             status = 'complete'
+#         elif response.startswith('Failed'):
+#             status = 'failed'
+#         self.category_task_status = status
+#         return status
+    
     def gen_task_completion_status(self):
-        dialogue_text = '\n'.join(list(reversed([
-            f"{role}: {text}" for role, text in zip(it.cycle((self.recommender, self.searcher)), reversed(self.context))
-        ])))
-        response = gpt(
-            [system(
-f"""
-You are a helpful assistant.
-"""
-            ),
-            user(
-f"""
-# Dialogue
-{dialogue_text}
-
-{self.dialogue.rstrip('.')} (above). During the conversation, the {self.searcher} needs help searching for a {self.item_type}. Is the above Dialogue:
-
-(1) Complete: the {self.searcher} has made and confirmed their choice of {self.item_type} and they are about to say goodbye
-(2) Incomplete: the {self.searcher} still needs to confirm their final choice of {self.item_type}, or is still looking for more information
-(3) Failed: the {self.searcher} and {self.recommender} are saying goodbye to each other but no {self.item_type} was chosen by the {self.searcher}
-
-Please answer one of [Complete/Incomplete/Failed]
-"""
-            )
-        ], temperature=0.0)
-        status: T.Literal['incomplete', 'complete', 'failed'] = 'incomplete'
-        if response.startswith('Complete'):
-            status = 'complete'
-        elif response.startswith('Failed'):
-            status = 'failed'
-        self.category_task_status = status
-        return status
+        for message in self.context:
+            if "goodbye" in message.lower():
+                self.category_task_status = 'complete'
+                return 'complete'
+        self.category_task_status = 'incomplete'
+        return 'incomplete'
 
 
 
@@ -356,7 +365,7 @@ def simulate_scenario(scenario_folder):
     dialogue_json = []
     context = []
     status = 'incomplete'
-    for i, domain_json in enumerate(scenario_json):
+    for i, domain_json in enumerate(scenario_json[:1]):
         gen = GenDialogueSim(
             context=context,
             dialogue=domain_json['dialogue'],
@@ -368,7 +377,7 @@ def simulate_scenario(scenario_folder):
             py_database_schema=domain_json['recommender_schema_code']
         )
         gen.gen_database_objects()
-        gen.gen_database_red_herrings()
+        #gen.gen_database_red_herrings()
         gen.gen_preference_object()
         stage_json = dict(
             domain=gen.item_type,
@@ -425,12 +434,12 @@ def simulate_dialogues(data_folder, n_dialogues_per_scenario):
 
 if __name__ == '__main__':
 
-    # simulate_scenario('data/d0t/dot_test/0001__family-friendly_vacation_destination__hotel_with_kid-friendly_amenities__activities_suitable_for_teenagers')
+    #simulate_scenario('data/d0t/dot_test/0001__family-friendly_vacation_destination__hotel_with_kid-friendly_amenities__activities_suitable_for_teenagers')
 
-    simulate_dialogues('data/DOTS/eval', 100)
+    simulate_dialogues('data/DOTS/train', 1)
 
     n = 0
-    for folder in Path('data/DOTS/eval').glob('*__*'):
+    for folder in Path('data/DOTS/train').glob('*__*'):
         if folder.is_dir():
             for file in folder.glob('dial*.json'):
                 actual_id = f"{folder.name}/{file.name}"

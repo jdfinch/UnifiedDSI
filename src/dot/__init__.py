@@ -9,7 +9,7 @@ import ezpyzy as ez
 import itertools as it
 import atexit as ae
 
-api = openai.OpenAI(api_key=pl.Path('~/.pw/openai').expanduser().read_text().strip())
+api = openai.OpenAI(api_key=pl.Path('~/.pw/openai.txt').expanduser().read_text().strip())
 
 system = lambda text: dict(role='system', content=dedent(text))
 user = lambda text: dict(role='user', content=dedent(text))
@@ -23,6 +23,8 @@ if cache_file.exists():
     cache_items = list(reversed(cache_file.read_text().split(cache_sep)))
     cache = dict(zip(cache_items[0::2], cache_items[1::2]))
 else:
+    cache_file.parent.mkdir(exist_ok=True, parents=True)
+    cache_file.touch(exist_ok=True)
     cache = {}
 
 def save_cache(cachemax=1000):

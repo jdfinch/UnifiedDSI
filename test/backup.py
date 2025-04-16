@@ -88,29 +88,24 @@ class GenTaskScenarios(Generate):
         self.text_tasks_list: str|None = None
         self.tasks_list: list[str] = []
 
-#     def gen_search_dialogue_tasks(self):
-#         self.text_tasks_list = gpt([
-#             system(
-# f"""You are an intelligent, helpful, and medical assistant."""
-#             ),
-#             user(
-# f"""
-# Write a list of {self.num_scenarios} unique dialogue scenarios that involve a sequence of 1 questioning/ diagnosis based on patient symptoms/ doctor knowledge.
-
-# Each dialogue scenario should be summarized as a one-sentence description that names both patient and doctor roles and identifies what diseases the doctor is trying to identify, like:
-
-# <doctor> is trying to identify <patient>'s diseases which is <disease>
-
-# Make sure to avoid naming any symptoms in the one sentence description. Also make sure some scenarios the doctors only has 1 or 2 guesses for what the disease might be, and some they have 5 guesses, but most scenarios should have 3 questioning/ diagnosis items.
-# """
-#             )
-#         ], model='gpt-4o', temperature=1.0)
-#         self.tasks_list = [x.group(1) for x in list_item_pattern.finditer(self.text_tasks_list)]
-#         return self.tasks_list
-
     def gen_search_dialogue_tasks(self):
-        self.text_tasks_list = "1. A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies."
-        self.tasks_list = ["A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies."]
+        self.text_tasks_list = gpt([
+            system(
+f"""You are an intelligent, helpful, and medical assistant."""
+            ),
+            user(
+f"""
+Write a list of {self.num_scenarios} unique dialogue scenarios that involve a sequence of 1 questioning/ diagnosis based on patient symptoms/ doctor knowledge.
+
+Each dialogue scenario should be summarized as a one-sentence description that names both patient and doctor roles and identifies what diseases the doctor is trying to identify, like:
+
+<doctor> is trying to identify <patient>'s diseases which is <disease>
+
+Make sure to avoid naming any symptoms in the one sentence description. Also make sure some scenarios the doctors only has 1 or 2 guesses for what the disease might be, and some they have 5 guesses, but most scenarios should have 3 questioning/ diagnosis items.
+"""
+            )
+        ], model='gpt-4o', temperature=1.0)
+        self.tasks_list = [x.group(1) for x in list_item_pattern.finditer(self.text_tasks_list)]
         return self.tasks_list
 
 
@@ -165,33 +160,9 @@ class GenTaskScenario(Generate):
         self.py_task_summary: str|None = None
         self.task_summary: DialogueForMultipleSearches|None = None
 
-#     def gen_search_dialogue_progression(self):
-#         self.py_task_summary = gpt([
-#             system_code_prompt,
-#             user(
-# f"""
-# ```python
-# import dataclasses as dc
-
-# {ins.getsource(SearchTopic)}
-
-# {ins.getsource(DialogueForMultipleSearches)}
-# ```
-
-# Using the above dataclasses, instantiate a DialogueForMultipleSearches object like `dialogue = DialogueForMultipleSearches(...` to represent the following dialogue scenario: 
-# {self.scenario.replace(' then ', ' ').replace(' finally ', ' ').replace(' lastly ', ' ')}
-# """
-#             )
-#         ], temperature=0.8)
-#         task_code = self.interpret(self.py_task_summary)
-#         for code_obj in task_code.values():
-#             if isinstance(code_obj, DialogueForMultipleSearches):
-#                 self.task_summary = code_obj
-
-#         return self.task_summary
-
     def gen_search_dialogue_progression(self):
-        criteria_prompt = gpt([
+        self.py_task_summary = gpt([
+            system_code_prompt,
             user(
 f"""
 ```python
@@ -205,29 +176,31 @@ import dataclasses as dc
 Using the above dataclasses, instantiate a DialogueForMultipleSearches object like `dialogue = DialogueForMultipleSearches(...` to represent the following dialogue scenario: 
 {self.scenario.replace(' then ', ' ').replace(' finally ', ' ').replace(' lastly ', ' ')}
 """
-                )], temperature=0.8)
-            
-        generated_objects = self.interpret(criteria_prompt)
-        for obj in generated_objects.values():
-            if isinstance(obj, DialogueForMultipleSearches):
-                topic = obj.topics[0]
-                possible_criteria = topic.possible_criteria # Instead of only getting the first topics with object.topics[0] we should get a list of infromation of all the topics and extract the possible criteria.
-                break
-        else:
-            raise ValueError("Failed to extract criteria from GPT output.")
+            )
+        ], temperature=0.8)
+        task_code = self.interpret(self.py_task_summary)
+        for code_obj in task_code.values():
+            if isinstance(code_obj, DialogueForMultipleSearches):
+                self.task_summary = code_obj
 
-        print("CHECK THESE: ", possible_criteria)
-        self.task_summary = DialogueForMultipleSearches(
-            searcher="patient",
-            recommender="doctor",
-            scenario="A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies.",
-            topics=[
-                SearchTopic(
-                    searched_item_type_name="illness",
-                    possible_criteria=possible_criteria
-                )
-            ]
-        )
+# I am using a static task summary beacuse it might produce more focused and consistant results.
+        # searcher="patient",
+        # recommender="doctor",
+        # self.task_summary = DialogueForMultipleSearches(
+        #     searcher="patient",
+        #     recommender="doctor",
+        #     scenario=f"The {searcher} is asking the {recommender} to help identify a suitable disease based on the conveyed information.",
+        #     topics=[
+        #         SearchTopic(
+        #             searched_item_type_name=item_type,
+        #             possible_criteria={
+        #                 "pain_location": "Where the patient feels pain",
+        #                 "duration": "How long the symptoms have lasted",
+        #                 "severity": "How intense the symptoms are"
+        #                 }
+        #             )
+        #         ]
+        #     )
         return self.task_summary
 
 
