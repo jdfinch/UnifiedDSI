@@ -345,7 +345,7 @@ def generate_scenarios(scenarios: int|list[str] = 10, save_folder=None):
                     recommender=scenario.task_summary.recommender,
                     dialogue=scenario.task_summary.scenario,
                     item_type=domain.topic.searched_item_type_name,
-                    criteria=list(domain.topic.possible_criteria),
+                    criteria=list(domain.topic.possible_criteria.values()),
                     searcher_schema_code=domain.py_preference_schema,
                     recommender_schema_code=domain.py_database_schema,
                     searcher_schema={
