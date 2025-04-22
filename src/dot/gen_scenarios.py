@@ -26,6 +26,7 @@ default_rng_seed = None
 gpt = ft.partial(gpt, model='gpt-4o-mini')
 list_item_pattern = re.compile(r"[0-9]+\. (.*)")
 
+topic_coutner = 0
 
 def extract_variable_docstrings(code: str) -> dict[str, str]:
     """
@@ -109,8 +110,8 @@ class GenTaskScenarios(Generate):
 #         return self.tasks_list
 
     def gen_search_dialogue_tasks(self):
-        self.text_tasks_list = "1. A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies."
-        self.tasks_list = ["A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies."]
+        self.text_tasks_list = "A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies."
+        self.tasks_list = ["A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies."] * 5
         return self.tasks_list
 
 
@@ -165,33 +166,10 @@ class GenTaskScenario(Generate):
         self.py_task_summary: str|None = None
         self.task_summary: DialogueForMultipleSearches|None = None
 
-#     def gen_search_dialogue_progression(self):
-#         self.py_task_summary = gpt([
-#             system_code_prompt,
-#             user(
-# f"""
-# ```python
-# import dataclasses as dc
-
-# {ins.getsource(SearchTopic)}
-
-# {ins.getsource(DialogueForMultipleSearches)}
-# ```
-
-# Using the above dataclasses, instantiate a DialogueForMultipleSearches object like `dialogue = DialogueForMultipleSearches(...` to represent the following dialogue scenario: 
-# {self.scenario.replace(' then ', ' ').replace(' finally ', ' ').replace(' lastly ', ' ')}
-# """
-#             )
-#         ], temperature=0.8)
-#         task_code = self.interpret(self.py_task_summary)
-#         for code_obj in task_code.values():
-#             if isinstance(code_obj, DialogueForMultipleSearches):
-#                 self.task_summary = code_obj
-
-#         return self.task_summary
-
     def gen_search_dialogue_progression(self):
-        criteria_prompt = gpt([
+        global topic_coutner
+        self.py_task_summary = gpt([
+            system_code_prompt,
             user(
 f"""
 ```python
@@ -205,30 +183,62 @@ import dataclasses as dc
 Using the above dataclasses, instantiate a DialogueForMultipleSearches object like `dialogue = DialogueForMultipleSearches(...` to represent the following dialogue scenario: 
 {self.scenario.replace(' then ', ' ').replace(' finally ', ' ').replace(' lastly ', ' ')}
 """
-                )], temperature=0.8)
-            
-        generated_objects = self.interpret(criteria_prompt)
-        for obj in generated_objects.values():
-            if isinstance(obj, DialogueForMultipleSearches):
-                topic = obj.topics[0]
-                possible_criteria = topic.possible_criteria # Instead of only getting the first topics with object.topics[0] we should get a list of infromation of all the topics and extract the possible criteria.
-                break
-        else:
-            raise ValueError("Failed to extract criteria from GPT output.")
+            )
+        ], temperature=0.8)
+        task_code = self.interpret(self.py_task_summary)
+        for code_obj in task_code.values():
+            if isinstance(code_obj, DialogueForMultipleSearches):
+                self.task_summary = code_obj
+        
+        topic_coutner = min(topic_coutner, len(self.task_summary.topics) - 1)
+        disease = self.task_summary.topics[topic_coutner].searched_item_type_name
+        self.task_summary.recommender = "doctor"
+        self.task_summary.searcher = "patient"
+        self.task_summary.scenario = f"A doctor is trying to diagnose if the patient has {disease} based on the affected body systems the patient identifies."
+        self.task_summary.topics = [self.task_summary.topics[topic_coutner]]
+        topic_coutner += 1
 
-        print("CHECK THESE: ", possible_criteria)
-        self.task_summary = DialogueForMultipleSearches(
-            searcher="patient",
-            recommender="doctor",
-            scenario="A doctor is trying to diagnose if the patient has an illness and if so which one based on the affected body systems the patient identifies.",
-            topics=[
-                SearchTopic(
-                    searched_item_type_name="illness",
-                    possible_criteria=possible_criteria
-                )
-            ]
-        )
         return self.task_summary
+
+#     def gen_search_dialogue_progression(self):
+#         criteria_prompt = gpt([
+#             user(
+# f"""
+# ```python
+# import dataclasses as dc
+
+# {ins.getsource(SearchTopic)}
+
+# {ins.getsource(DialogueForMultipleSearches)}
+# ```
+
+# Using the above dataclasses, instantiate a DialogueForMultipleSearches object like `dialogue = DialogueForMultipleSearches(...` to represent the following dialogue scenario: 
+# {self.scenario.replace(' then ', ' ').replace(' finally ', ' ').replace(' lastly ', ' ')}
+# """
+#                 )], temperature=0.8)
+            
+#         generated_objects = self.interpret(criteria_prompt)
+#         for obj in generated_objects.values():
+#             if isinstance(obj, DialogueForMultipleSearches):
+#                 topic = obj.topics[0]
+#                 possible_criteria = topic.possible_criteria 
+#                 item_type = topic.searched_item_type_name
+#                 break
+#         else:
+#             raise ValueError("Failed to extract criteria from GPT output.")
+
+#         self.task_summary = DialogueForMultipleSearches(
+#             searcher="patient",
+#             recommender="doctor",
+#             scenario=f"A doctor is trying to diagnose if the patient has {item_type} and if so which one based on the affected body systems the patient identifies.",
+#             topics=[
+#                 SearchTopic(
+#                     searched_item_type_name=item_type,
+#                     possible_criteria=possible_criteria
+#                 )
+#             ]
+#         )
+#         return self.task_summary
 
 
 @dc.dataclass
