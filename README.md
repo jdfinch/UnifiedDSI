@@ -4,6 +4,12 @@
 
 * https://arxiv.org/pdf/2504.18474
 
+## Inference
+
+* https://huggingface.co/jdfinch/ssi_dots_lora
+* https://huggingface.co/jdfinch/ssi_sgd_lora
+* src/dsi/inference.py
+
 ## DOTS data
 
 * train under data/DOTS/train
