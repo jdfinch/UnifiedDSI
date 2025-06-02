@@ -11,6 +11,10 @@ You are an intelligent and knowledgeable assistant.<|eot_id|><|start_header_id|>
 
 # Key Information Types
 
+## Taxi
+* departure_time: the time the taxi should to pick up the Traveler, in HH:MM format.
+* arrival_time: the time the taxi should arrive at the drop off location, in HH:MM format.
+
 # Dialogue
 User: yes , i am looking for a hotel by the name of the autumn house . can you tell me about it ?
 Agent: yes , the autumn house is on the east part of time , the price -s are cheap and it s 4 stars . is there anything else you would like to know ?
@@ -60,63 +64,42 @@ def main():
 
     # Decode and print only new generation
     generated = tokenizer.decode(output[0], skip_special_tokens=False)
-    print(generated[len(prompt):].strip())
+    print(generated)
 
 if __name__ == '__main__':
     main()
 
-
+    # Output from above prompt
     """
 ## Hotel
 * name: Autumn House
-        - The name of the hotel, if the traveler is looking for a specific hotel.
+        - The name of the hotel, if the Traveler is looking for a specific hotel.
 * location: East
-        - The preferred location or area of the hotel.
+        - The preferred location or area of the hotel, e.g., 'downtown', 'beach', etc.
 * price_range: Cheap
-        - The preferred price range for the hotel room.
+        - The preferred price range for the hotel room, e.g., 'budget','mid', 'high'.
 * stars: 4
-        - The preferred star rating of the hotel.
+        - The preferred star rating of the hotel, ranging from 1 to 5 stars.
 * guests: 2
-        - The number of guests the traveler is booking the hotel for.
+        - The number of guests the Traveler is booking the hotel for.
 * duration: 5
-        - The number of nights the traveler plans to stay at the hotel.
+        - The number of nights the Traveler plans to stay at the hotel.
 
-## Travel Plans
-* hotel: Autumn House
-        - Preferred hotel for the trip, if any.
-* meal_option: None
-        - Preferred meal option for the travel plans.
-* activity_level: None
-        - Preferred level of physical activity for the travel plans.
-* price_range: None
-        - Preferred budget range for the travel plans.
-* duration: 5
-        - Duration of the trip in days.
-* start_date: 2023-07-05
-        - Start date of the trip in YYYY-MM-DD format.
-* start_time: 24:45
-        - Start time of the trip in 24-hour format (HH:MM).
-* location: None
-        - Preferred location or region for the travel plans.
-
-## Local Insights
+## Place to Visit
 * name: Churchill College
-        - The name of a specific Local Insight the Traveler is looking for.
+        - The specific name of the Place to Visit if the Traveler is looking for a particular location.
 * type: college
-        - The type of local insight, such as'sightseeing', 'dining','shopping', 'entertainment', 'history', or 'education'.
-* area: west
-        - The area of interest, such as 'downtown', 'beach', 'city center', etc.
-* price_range: None
-        - The price range for the Local Insight, such as 'budget','mid', 'high'.
-* popularity_score: None
-        - The popularity score (out of 10) for the Local Insight, if available.
-* description: None
-        - A description of the Local Insight, if available.
+        - The type of the Place to Visit, such as a museum, park, restaurant, or any other specific type.
+* location: West
+        - The geographic location of the Place to Visit, e.g., city, country, region, or cross-town.
+* information: 
+        - Any additional information or notes about the Place to Visit that the Traveler might find useful.
 
-## Transportation
-* type: taxi
-        - The type of transportation preferred, such as 'car', 'airplane', 'train', 'bus', or 'taxi'.
-* time: 24:45
-        - The preferred time for the transportation to be, in 24-hour format 'HH:MM'.
+## Taxi
+* pickup_location: Stoney S Way
+        - the preferred location where the taxi should pick up the Traveler.
+* dropoff_location: None
+        - the preferred location where the taxi should drop off the Traveler.
+* departure_time: 24:45
 * <|eot_id|>
     """
