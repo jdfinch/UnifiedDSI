@@ -1,0 +1,276 @@
+
+
+
+baselines_mwoz/claude-3.5-sonnet-20241022-10-window
+
+    "slot_precision": 0.85,
+    "slot_recall": 0.5862068965517241,
+    "slot_f1": 0.693877551020408,
+    "value_precision": 0.9418604651162791,
+    "value_recall": 0.9418604651162791,
+    "value_f1": 0.9418604651162791,
+    "macro_value_precision": 0.9425770308123248,
+    "macro_value_recall": 0.9372549019607842,
+    "macro_value_f1": 0.9399084324535952,
+
+
+
+VibrantJyn_tebu/30000
+    schema states
+
+    "schema_mode": "schema",
+    "state_mode": "states",
+    "train_data_path": "data/DOTS/train",
+    "base_model_repo_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "quantization": "nf4dq",
+
+
+    WiseTeth_tebu
+    SlotConf F
+    "slot_precision": 0.41019535652809297,
+    "slot_recall": 0.7148863391510449,
+    "slot_f1": 0.5064316487665649,
+    "value_precision": 0.8353330993128818,
+    "value_recall": 0.6791271719432693,
+    "value_f1": 0.738968601761513,
+    "macro_value_precision": 0.8521052528252843,
+    "macro_value_recall": 0.6932110189006359,
+    "macro_value_f1": 0.7536421456268713,
+
+
+    CharismaticYavinIV_tebu
+    SlotConf S
+    "slot_precision": 0.3058575445813417,
+    "slot_recall": 0.7752063432210491,
+    "slot_f1": 0.4248319139113474,
+    "value_precision": 0.8425908849325981,
+    "value_recall": 0.5051433611609227,
+    "value_f1": 0.6148471077950636,
+    "macro_value_precision": 0.8627382047961231,
+    "macro_value_recall": 0.5198447351539673,
+    "macro_value_f1": 0.6304511117602775,
+
+    VJ_ds_counts_mwoz
+    Priority F
+    "slot_precision": 0.2,
+    "slot_recall": 0.6666666666666666,
+    "slot_f1": 0.3076923076923077,
+    "value_precision": 0.7804279678342647,
+    "value_recall": 0.4004195804195804,
+    "value_f1": 0.5292785506308638,
+    "macro_value_precision": 0.7832132952210537,
+    "macro_value_recall": 0.42757328943180306,
+    "macro_value_f1": 0.5531628599277901,
+
+
+    FieryAjanKloss_tebu
+    Embed F
+    "slot_precision": 0.36707008772226163,
+    "slot_recall": 0.3409645909645909,
+    "slot_f1": 0.30653332078706985,
+    "value_precision": 0.5920304595917979,
+    "value_recall": 0.6004949513775943,
+    "value_f1": 0.5703678801347214,
+    "macro_value_precision": 0.6069177188927352,
+    "macro_value_recall": 0.6056987884556594,
+    "macro_value_f1": 0.5803790594937127,
+
+
+
+EuphoricIthor_tebu/30000
+    schema updates
+
+    "base_model_repo_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "train_data_path": "data/DOTS/train",
+    "schema_mode": "schema",
+    "state_mode": "updates",
+    
+    UntamedZiost_tebu
+    SlotConf U
+    "slot_precision": 0.329381867940463,
+    "slot_recall": 0.7174092927769399,
+    "slot_f1": 0.42279955465370755,
+    "value_precision": 0.8654490853334743,
+    "value_recall": 0.46226310602153914,
+    "value_f1": 0.5699488655740371,
+    "macro_value_precision": 0.8753502396471055,
+    "macro_value_recall": 0.4721382374261591,
+    "macro_value_f1": 0.5807942430006738,
+
+    Embed F
+
+
+
+
+EnthrallingLehon_h100
+    schema states (revision)
+
+    "base_model_repo_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "train_data_path": "data/DOTS/train",
+    "schema_mode": "schema",
+    "state_mode": "states",
+    
+    HyperspaceBatuu_tebu
+    Rev S
+    "slot_precision": 0.2774074111400829,
+    "slot_recall": 0.696539382609644,
+    "slot_f1": 0.37414551737424423,
+    "value_precision": 0.7703470154302162,
+    "value_recall": 0.5086991434137219,
+    "value_f1": 0.5935502976145495,
+    "macro_value_precision": 0.8066054723821153,
+    "macro_value_recall": 0.5210189592166543,
+    "macro_value_f1": 0.6118400540878534,
+
+    EL_ds_rev_mwoz
+    SlotConf F
+    "slot_precision": 0.3230769230769231,
+    "slot_recall": 0.7,
+    "slot_f1": 0.4421052631578947,
+    "value_precision": 0.7483625884202253,
+    "value_recall": 0.6999509924038226,
+    "value_f1": 0.7233476829577108,
+    "macro_value_precision": 0.7632047698405782,
+    "macro_value_recall": 0.6974205043987487,
+    "macro_value_f1": 0.7288312271865186,
+
+
+
+FieryMace_h100/30000
+    schema updates (revision)
+
+    "base_model_repo_id": "meta-llama/Llama-3.1-8B-Instruct",
+    "train_data_path": "data/DOTS/train",
+    "schema_mode": "schema",
+    "state_mode": "updates",
+    
+    FM_us_rev_mwoz
+    Rev U
+    "slot_precision": 0.28169014084507044,
+    "slot_recall": 0.6666666666666666,
+    "slot_f1": 0.39603960396039606,
+    "value_precision": 0.7922077922077922,
+    "value_recall": 0.3249001331557923,
+    "value_f1": 0.46081208687440983,
+    "macro_value_precision": 0.8016335651761977,
+    "macro_value_recall": 0.3487713726370489,
+    "macro_value_f1": 0.4860668268859969,
+    
+    
+    
+FormidableIridonia/10000
+    DOMAINS ARE NOT FILTERED
+
+    SGD schema states
+    
+    EuphoricNaboo_tebu
+    SlotConf F
+    "slot_precision": 0.7001557671169815,
+    "slot_recall": 0.8217582617092419,
+    "slot_f1": 0.7473753815460761,
+    "value_precision": 0.8417440919882656,
+    "value_recall": 0.7824796150908537,
+    "value_f1": 0.8032954711875209,
+    "macro_value_precision": 0.8599046587105833,
+    "macro_value_recall": 0.7909528171002519,
+    "macro_value_f1": 0.8162405525103389,
+
+
+ExoticTeth_tebu/1000
+    FILTERED DOMAINS
+
+    SGD schema states
+
+    ResilientClakdorVII_tebu
+    SlotConf F
+    "slot_precision": 0.5849751193841848,
+    "slot_recall": 0.6876441293516456,
+    "slot_f1": 0.602201823405946,
+    "value_precision": 0.8463757835973896,
+    "value_recall": 0.627634016765596,
+    "value_f1": 0.706572454773816,
+    "macro_value_precision": 0.8476099297241714,
+    "macro_value_recall": 0.642763286112675,
+    "macro_value_f1": 0.7179959526269505,
+
+
+    
+
+DaringDewback_h100/10000
+    SGD schema states (revision)
+
+
+FieryMustufar/10000
+    d0t updates
+
+    FM_dot1_mwoz
+
+    "slot_precision": 0.21839080459770116,
+    "slot_recall": 0.6333333333333333,
+    "slot_f1": 0.32478632478632485,
+    "value_precision": 0.6938040345821326,
+    "value_recall": 0.14010329526442133,
+    "value_f1": 0.2331295769533378,
+    "macro_value_precision": 0.7232826365259131,
+    "macro_value_recall": 0.15087041715735663,
+    "macro_value_f1": 0.2496632657989323,
+
+
+
+old_dot_t5_wo_qmark_mwoz
+
+    Embed D0T T5 - silhouette score grid search
+
+    "slot_precision": 0.009149130832570906,
+    "slot_recall": 1.0,
+    "slot_f1": 0.01813236627379873,
+    "value_precision": 0.9011777695988222,
+    "value_recall": 0.012626503538876068,
+    "value_f1": 0.02490407329334374,
+
+
+    Embed D0T T5 - original sigdial hyperparams
+
+    "slot_precision": 0.125,
+    "slot_recall": 0.6666666666666666,
+    "slot_f1": 0.21052631578947367,
+    "value_precision": 0.802653399668325,
+    "value_recall": 0.11519969533964869,
+    "value_f1": 0.20148197485638167,
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -63,6 +63,11 @@ if __name__ == '__main__':
     # print('\nSGD')
     # get_data_stats(sgd)
 
+    sgd = dial.sgd_to_dialogues('data/sgd/test', apply_sgdx=False, filter_out_domains=())
+    print('\nSGD Test')
+    get_data_stats(sgd)
+    print('SGD domains:', {d for x in sgd for d in x.domains()})
+
     # sgd = dial.sgd_to_dialogues('data/sgd/train', apply_sgdx=True, filter_out_domains=())
     # print('\nSGDX')
     # get_data_stats(sgd)

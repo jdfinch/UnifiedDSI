@@ -1406,56 +1406,57 @@ if __name__ == '__main__':
 
     # export PYTHONPATH=/local/scratch/jdfinch/2025/UnifiedDSI/src
     # export CUDA_VISIBLE_DEVICES=7
-    # nohup python -u src/dsi/dsi2.py > ex/8B_VJ_dc_dots_datasize.out 2>&1 &
+    # nohup python -u src/dsi/dsi2.py > ex/dot1_uc_sv.out 2>&1 &
 
-    for size in [3, 5, 10]:
-        size = size * 10
-        print()
-        print('#'*30)
-        print(f'Starting size {size}')
-        print('#'*30)
-        print()
-        data = 'DOTS'
-        modelname = 'VibrantJyn_tebu'
-        modelac = ''.join([c for c in modelname if c.isupper()])
-        suffix = 'dc'
-        evaluation_experiment = DsiExperiment(
-            experiment_name=f'{modelac}_{suffix}_{data}_size_{str(size)}',
-            model_to_load=f"ex/{modelname}/30000",
-            base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-            **mode_dc, # <- inference settings
-            infer_revisions=False,
-            infer_bad_slots_by_tracked_counts=False,
-            infer_bad_slots_by_min_count_per_dialogue_window=None,
+    # for size in [10]:
+    #     size = size * 10
+    #     print()
+    #     print('#'*30)
+    #     print(f'Starting size {size}')
+    #     print('#'*30)
+    #     print()
+    data = 'DOTS'
+    modelname = 'VibrantJyn_tebu'
+    modelac = ''.join([c for c in modelname if c.isupper()])
+    suffix = 'ds_win'
+    evaluation_experiment = DsiExperiment(
+        experiment_name=f'{modelac}_{suffix}_{data}',
+        model_to_load=f"ex/{modelname}/30000",
+        base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
+        **mode_dc, # <- inference settings
+        infer_revisions=False,
+        infer_bad_slots_by_tracked_counts=False,
+        infer_bad_slots_by_min_count_per_dialogue_window=None,
+        # cluster_format='sv',
 
-            downsample_eval_dialogues=size,
-            eval_data_path='data/DOTS/eval_final_corrected',
-            eval_replicates=3,
-            eval_per_scenario=True,
-            # eval_data_path='data/multiwoz24/test_dials.json',
-            device='cuda:0',
-            **projdict,
-            load_finetuned_lora=True,
-            quantization='nf4dq',
-            max_seq_len=2048*2,
-            max_new_tokens=1024*2,
-            new_lora_rank=None,
-            epochs=0,
-            decoding_repetition_penalty=1.2,
-            decoding_beams=1,
-            decoding_batch_size=1,
-            max_schema_size=100,
-            rng_seed=None,
-            tag="final"
-        )
+        downsample_eval_dialogues=None,
+        eval_data_path='data/multiwoz24/test_dials.json',
+        eval_replicates=3,
+        eval_per_scenario=True,
+        # eval_data_path='data/multiwoz24/test_dials.json',
+        device='cuda:0',
+        **projdict,
+        load_finetuned_lora=True,
+        quantization='nf4dq',
+        max_seq_len=2048*2,
+        max_new_tokens=1024*2,
+        new_lora_rank=None,
+        epochs=0,
+        decoding_repetition_penalty=1.2,
+        decoding_beams=1,
+        decoding_batch_size=1,
+        max_schema_size=100,
+        rng_seed=None,
+        tag="final"
+    )
 
-        # dial.dot2_to_dialogues(evaluation_experiment.eval_data_path)
-        evaluation_experiment.run()
-        # launch(evaluation_experiment)
+    # dial.dot2_to_dialogues(evaluation_experiment.eval_data_path)
+    # evaluation_experiment.run()
+    launch(evaluation_experiment)
 
-        del evaluation_experiment
-        gc.collect()
-        pt.cuda.empty_cache()
+    del evaluation_experiment
+    gc.collect()
+    pt.cuda.empty_cache()
 
     # launch(training_experiment)
     # training_experiment.run()

@@ -1,0 +1,550 @@
+
+< INPUT >
+What is the slot schema covered by the Schema-Guided Dialogue Dataset (SGD)? Please list all of the domains and their slots that are included in the train, validation, and test splits of SGD in the format "# DOMAIN\n* SLOT1\nSLOT 2\n..."
+
+
+-----------------------
+GPT-4o, Temperature 0.7
+-----------------------
+
+
+< OUTPUT >
+
+The Schema-Guided Dialogue (SGD) Dataset is a comprehensive dataset used for training and evaluating dialogue systems. It covers a wide range of domains and slots. Below is a list of domains and their corresponding slots as included in the train, validation, and test splits of the SGD dataset:
+
+1. **Alarm**
+   - alarm_name
+   - alarm_time
+   - date
+   - time
+
+2. **Banks**
+   - account_type
+   - amount
+   - account_balance
+   - transaction_date
+   - transaction_type
+
+3. **Buses**
+   - bus_id
+   - departure_date
+   - departure_time
+   - destination
+   - number_of_passengers
+   - origin
+
+4. **Calendar**
+   - date
+   - time
+   - duration
+   - event_name
+   - location
+   - participants
+
+5. **Events**
+   - event_name
+   - date
+   - location
+   - time
+   - duration
+   - participants
+
+6. **Flights**
+   - airline
+   - arrival_date
+   - arrival_time
+   - departure_date
+   - departure_time
+   - destination
+   - flight_number
+   - number_of_passengers
+   - origin
+
+7. **Hotels**
+   - check_in_date
+   - check_out_date
+   - number_of_rooms
+   - room_type
+   - number_of_adults
+   - number_of_children
+   - hotel_name
+
+8. **Media**
+   - media_type
+   - genre
+   - artist
+   - album
+   - song_name
+
+9. **Movies**
+   - movie_name
+   - genre
+   - date
+   - time
+   - location
+
+10. **Music**
+    - artist
+    - album
+    - song_name
+    - genre
+
+11. **RentalCars**
+    - car_type
+    - rental_company
+    - pick_up_date
+    - pick_up_time
+    - drop_off_date
+    - drop_off_time
+    - number_of_passengers
+
+12. **Restaurants**
+    - restaurant_name
+    - cuisine
+    - number_of_people
+    - date
+    - time
+    - location
+
+13. **RideSharing**
+    - ride_type
+    - pick_up_location
+    - drop_off_location
+    - number_of_people
+    - pick_up_time
+
+14. **Services**
+    - service_name
+    - appointment_date
+    - appointment_time
+    - service_provider
+    - location
+
+15. **Shopping**
+    - item_name
+    - category
+    - price_range
+    - store_name
+    - delivery_date
+
+16. **Trains**
+    - train_id
+    - departure_date
+    - departure_time
+    - destination
+    - number_of_passengers
+    - origin
+
+17. **Travel**
+    - destination
+    - start_date
+    - end_date
+    - number_of_travelers
+    - travel_agency
+
+18. **Weather**
+    - location
+    - date
+    - time
+    - temperature
+    - condition
+
+These domains and slots are utilized to create dialogues that simulate real-world interactions with digital assistants, aiding in the development of more robust dialogue systems.
+
+
+
+< METRICS >
+Precision = 
+Recall = 
+F1 =
+
+
+
+-----------------------
+Claude-sonnet-3-5, Temperature 0.7
+-----------------------
+
+< OUTPUT >
+
+Here are all the domains and slots from the Schema-Guided Dialogue Dataset (SGD):
+
+Alarm
+
+alarm_name
+alarm_time
+date
+
+Banks
+
+account_type
+amount
+recipient_account_name
+recipient_account_number
+transfer_time
+
+Buses
+
+arriving_time
+bus_number
+departure_date
+departure_location
+departure_time
+destination_location
+from_location
+to_location
+
+Calendar
+
+attendee_name
+date
+location
+room
+time
+
+Events
+
+category
+city
+date
+event_name
+event_type
+location
+number_of_seats
+subcategory
+time
+
+Flights
+
+airlines
+arrival_date
+arrival_time
+departure_date
+departure_time
+destination_city
+from_location
+number_of_seats
+origin_city
+seating_class
+to_location
+
+Hotels
+
+address
+check_in_date
+check_out_date
+city
+has_wifi
+hotel_name
+location
+number_of_adults
+number_of_rooms
+price_per_night
+rating
+room_type
+star_rating
+total_price
+
+Media
+
+album
+artist
+genre
+movie_name
+playlist
+song_name
+subtitle_language
+
+Movies
+
+city
+date
+location
+movie_name
+number_of_seats
+theater_name
+time
+
+Music
+
+album
+artist
+genre
+playlist
+song_name
+
+Payment
+
+amount
+receiver
+time
+
+RentalCars
+
+car_name
+car_type
+city
+date
+end_date
+location
+pickup_date
+pickup_location
+pickup_time
+price_per_day
+start_date
+total_price
+
+Restaurants
+
+address
+category
+city
+closing_time
+cuisine
+date
+dress_code
+has_live_music
+has_vegan_options
+has_vegetarian_options
+location
+name
+number_of_seats
+opening_time
+party_size
+price_range
+rating
+serves_alcohol
+time
+
+RideSharing
+
+car_type
+date
+destination
+number_of_riders
+ride_fare
+ride_type
+shared_ride
+source
+
+Services
+
+appointment_date
+appointment_time
+city
+dentist_name
+doctor_name
+location
+service_name
+stylist_name
+
+Travel
+
+destination_city
+number_of_adults
+origin_city
+seating_class
+travel_date
+
+Weather
+
+city
+date
+high_temp
+location
+low_temp
+temperature
+weather_type
+
+
+
+< METRICS >
+Precision = 
+Recall = 
+F1 =
+
+
+-----------------------
+llama-3.1-8b-instruct, Temperature 0.7
+-----------------------
+
+What is the slot schema covered by the Schema-Guided Dialogue Dataset (SGD)? Please list all of the domains and their slots that are included in SGD in the format "# DOMAIN\n* SLOT1\nSLOT 2\n..."
+
+< OUTPUT >
+
+The Schema-Guided Dialogue Dataset (SGD) covers multiple domains, each with a set of predefined slots. Here are the domains and their corresponding slots:
+
+Hotel Booking
+
+hotel_name
+location
+arrival_date
+departure_date
+number_of_guests
+special_requests
+
+Flight Booking
+
+flight_number
+departure_airport
+arrival_airport
+departure_date
+return_date
+number_of_passengers
+
+Restaurant
+
+cuisine
+location
+price_range
+opening_hours
+reservation_time
+
+Taxi Booking
+
+pickup_location
+dropoff_location
+pickup_time
+dropoff_time
+number_of_passengers
+
+Movie Ticket Booking
+
+movie_title
+showtime
+theater_location
+tickets_required
+
+Tour Booking
+
+tour_name
+location
+duration
+language
+price_range
+
+Car Rental
+
+vehicle_type
+pickup_location
+dropoff_location
+pickup_time
+dropoff_time
+mileage_limit
+
+Hotel Review
+
+hotel_name
+rating
+location
+amenities
+services
+
+Product
+
+product_name
+brand
+price
+features
+warranty
+
+Product Review
+
+product_name
+rating
+features
+pros
+cons
+
+Note that some slots may overlap between domains, but the above list represents the specific slots defined for each domain in the SGD dataset.
+
+< METRICS >
+Precision = 
+Recall = 
+F1 =
+
+-----------------------
+llama-3.2-3b-instruct, Temperature 0.7
+-----------------------
+
+< OUTPUT >
+
+[RUN 1] 
+
+I cannot verify the Schema-Guided Dialogue Dataset (SGD) schema.
+
+[RUN 2]
+
+I can't search the web for you, but I can tell you the domains and their slots included in the Schema-Guided Dialogue Dataset (SGD).
+
+The Schema-Guided Dialogue Dataset (SGD) covers the following domains and slots:
+
+BOOK
+
+Title
+Author
+Publisher
+Publication Date
+Genre
+Summary
+Pages
+Price
+Reviews
+
+MOVIE
+
+Title
+Director
+Release Date
+Genre
+Runtime
+Plot
+Cast
+Rating
+Reviews
+
+PRODUCT
+
+Name
+Description
+Brand
+Price
+Rating
+Reviews
+
+Restaurant
+
+Name
+Address
+Cuisine
+Phone Number
+Hours
+Menu
+Reviews
+
+Event
+
+Name
+Date
+Time
+Location
+Description
+Tickets
+Venue
+Reviews
+
+Travel
+
+Destination
+Duration
+Accommodation
+Transportation
+Activities
+Reviews
+
+Please note that the above list may not be exhaustive and this information is based on my knowledge cutoff of 01 March 2023.
+ 
+< METRICS >
+Precision = 
+Recall = 
+F1 =
+

@@ -163,39 +163,207 @@ class SimMatcher:
 if __name__ == '__main__':
 
     experiments = [
-        'VJ_ds_win_1_10_DOTS'
+        # pl.Path('ex') / 'VJ_ds_win_1_10_DOTS_size_300' / '0' / 'r0',
+        # ('/local/scratch/jdfinch/2025/UnifiedDSI/data/yasasvi/model data/VJ best model data/VJ_ds_win_1_10_DOTS_size_300/0/r0', 'new approach, new eval data', dial.dot2_to_dialogues(gold_data_path)),
+
     ]
-    for exp in experiments:
-        for rep in range(3):
-            parent_dir = pl.Path('ex') / exp / '0' / f'r{rep}'
-            for scenario_dir in tqdm(list(parent_dir.iterdir()), 'Mapping Scenarios'):
-                if not scenario_dir.is_dir(): continue
-                print()
-                print(scenario_dir)
-                print()
-                data = dial.Dialogues.load(scenario_dir/'dsi_dial_states.json')
-                gold_data = dial.dot2_to_dialogues('data/DOTS/eval_final_corrected/')
+    for exp_dir, type_str, gold_data in experiments:
+        exp_dir = pl.Path(exp_dir)
+        for scenario_dir in tqdm(list(exp_dir.iterdir()), 'Mapping Scenarios'):
+            if not scenario_dir.is_dir(): continue
+            print()
+            print(scenario_dir)
+            print()
+            data = dial.Dialogues.load(scenario_dir/'dsi_dial_states.json')
 
-                dialogues_by_scenario = {}
-                for dialogue in data:
-                    dialogue: dial.Dialogue
-                    domains = dialogue.id[:dialogue.id.find('/')]
-                    dialogues_by_scenario.setdefault(domains, []).append(dialogue)
-                assert len(dialogues_by_scenario) == 1
+            dialogues_by_scenario = {}
+            for dialogue in data:
+                dialogue: dial.Dialogue
+                domains = dialogue.id[:dialogue.id.find('/')]
+                dialogues_by_scenario.setdefault(domains, []).append(dialogue)
+            assert len(dialogues_by_scenario) == 1
 
-                gold_by_scenario = {}
-                for dialogue in gold_data:
-                    dialogue: dial.Dialogue
-                    domains = dialogue.id[:dialogue.id.find('/')]
+            gold_by_scenario = {}
+            for dialogue in gold_data:
+                dialogue: dial.Dialogue
+                domains = dialogue.id[:dialogue.id.find('/')]
+                gold_by_scenario.setdefault(domains, []).append(dialogue)
+
+            domain, predicted = list(dialogues_by_scenario.items())[0]
+            gold = gold_by_scenario[domain]
+            sm = SimMatcher()
+            sm.match_values(gold=gold, predicted=predicted)
+            
+            scenario_results_path = scenario_dir/'old_evaluation_mapping.json'
+            scenario_results_path.write_text(json.dumps({', '.join(k): ', '.join(v) if v is not None else None for k,v in sm.best_matches.items()}, indent=2))
+
+    experiments = [
+        # pl.Path('ex') / 'old_t5_dot_wo_qmark',
+        # ('/local/scratch/jdfinch/2025/UnifiedDSI/data/yasasvi/model data/oldt5+cluster data/old_t5_dot_wo_qmark', 'old approach, new eval data', dial.dot2_to_dialogues(gold_data_path)),
+    ]
+    for exp_dir, type_str, gold_data in experiments:
+        exp_dir = pl.Path(exp_dir)
+        for scenario_dir in tqdm(list(exp_dir.iterdir()), 'Mapping Scenarios'):
+            if not scenario_dir.is_dir(): continue
+            print()
+            print(scenario_dir)
+            print()
+            data = dial.Dialogues.load(scenario_dir/f'dsi_dial_states.json')
+
+            dialogues_by_scenario = {}
+            for dialogue in data:
+                dialogue: dial.Dialogue
+                domains = dialogue.id[:dialogue.id.find('/')]
+                dialogues_by_scenario.setdefault(domains, []).append(dialogue)
+            assert len(dialogues_by_scenario) == 1
+
+            gold_by_scenario = {}
+            for dialogue in gold_data:
+                dialogue: dial.Dialogue
+                domains = dialogue.id[:dialogue.id.find('/')]
+                gold_by_scenario.setdefault(domains, []).append(dialogue)
+
+            domain, predicted = list(dialogues_by_scenario.items())[0]
+            gold = gold_by_scenario[domain]
+            sm = SimMatcher()
+            sm.match_values(gold=gold, predicted=predicted)
+            
+            scenario_results_path = scenario_dir/'old_evaluation_mapping.json'
+            scenario_results_path.write_text(json.dumps({', '.join(k): ', '.join(v) if v is not None else None for k,v in sm.best_matches.items()}, indent=2))
+            
+            old_eval_results = {
+                'slotp': sm.cluster_precision,
+                'slotr': sm.cluster_recall,
+                'slotf': sm.cluster_f1,
+                'n': sm.n,
+                'valp': sm.value_precision,
+                'valr': sm.value_recall,
+                'valf': sm.value_f1,
+            }
+            scenario_results_path = scenario_dir/'old_evaluation_results.json'
+            scenario_results_path.write_text(json.dumps(old_eval_results, indent=2))
+
+    ############
+    # MWOZ data
+    ############
+
+    experiments = [
+        ('/local/scratch/jdfinch/2025/UnifiedDSI/data/yasasvi/r0', 'new approach, mwoz', dial.multiwoz_to_dialogues('data/multiwoz24/test_dials.json'))
+
+    ]
+    for exp_dir, type_str, gold_data in experiments:
+        exp_dir = pl.Path(exp_dir)
+        for scenario_dir in tqdm(list(exp_dir.iterdir()), 'Mapping Scenarios'):
+            if not scenario_dir.is_dir(): continue
+            print()
+            print(scenario_dir)
+            print()
+            data = dial.Dialogues.load(scenario_dir/'dsi_dial_states.json')
+
+            dialogues_by_scenario = {}
+            dialogue_ids = []
+            for dialogue in data:
+                dialogue: dial.Dialogue
+                domains = scenario_dir.stem
+                dialogues_by_scenario.setdefault(domains, []).append(dialogue)
+                dialogue_ids.append(dialogue.id)
+            assert len(dialogues_by_scenario) == 1
+
+            gold_by_scenario = {}
+            for dialogue in gold_data:
+                domains = scenario_dir.stem
+                if dialogue.id in dialogue_ids:
                     gold_by_scenario.setdefault(domains, []).append(dialogue)
 
-                domain, predicted = list(dialogues_by_scenario.items())[0]
-                gold = gold_by_scenario[domain]
-                sm = SimMatcher()
-                sm.match_values(gold=gold, predicted=predicted)
-                
-                scenario_results_path = scenario_dir/'old_evaluation_mapping.json'
-                scenario_results_path.write_text(json.dumps({', '.join(k): ', '.join(v) if v is not None else None for k,v in sm.best_matches.items()}, indent=2))
+            domain, predicted = list(dialogues_by_scenario.items())[0]
+            gold = gold_by_scenario[domain]
+            sm = SimMatcher()
+            sm.match_values(gold=gold, predicted=predicted)
+            
+            scenario_results_path = scenario_dir/'old_evaluation_mapping.json'
+            scenario_results_path.write_text(json.dumps({', '.join(k): ', '.join(v) if v is not None else None for k,v in sm.best_matches.items()}, indent=2))
+
+    experiments = [
+        ('/local/scratch/jdfinch/2025/UnifiedDSI/data/yasasvi/App', 'old approach, mwoz', dial.multiwoz_to_dialogues('data/multiwoz24/test_dials.json'))
+    ]
+    for exp_dir, type_str, gold_data in experiments:
+        exp_dir = pl.Path(exp_dir)
+        for scenario_dir in tqdm(list(exp_dir.iterdir()), 'Mapping Scenarios'):
+            if not scenario_dir.is_dir(): continue
+            print()
+            print(scenario_dir)
+            print()
+            data = dial.Dialogues.load(scenario_dir/f'dsi_dial_states.json')
+
+            dialogues_by_scenario = {}
+            dialogue_ids = []
+            for dialogue in data:
+                dialogue: dial.Dialogue
+                domains = scenario_dir.stem
+                dialogues_by_scenario.setdefault(domains, []).append(dialogue)
+                dialogue_ids.append(dialogue.id)
+            assert len(dialogues_by_scenario) == 1
+
+            gold_by_scenario = {}
+            for dialogue in gold_data:
+                domains = scenario_dir.stem
+                if dialogue.id in dialogue_ids:
+                    gold_by_scenario.setdefault(domains, []).append(dialogue)
+
+            domain, predicted = list(dialogues_by_scenario.items())[0]
+            gold = gold_by_scenario[domain]
+            sm = SimMatcher()
+            sm.match_values(gold=gold, predicted=predicted)
+            
+            scenario_results_path = scenario_dir/'old_evaluation_mapping.json'
+            scenario_results_path.write_text(json.dumps({', '.join(k): ', '.join(v) if v is not None else None for k,v in sm.best_matches.items()}, indent=2))
+            
+            old_eval_results = {
+                'slotp': sm.cluster_precision,
+                'slotr': sm.cluster_recall,
+                'slotf': sm.cluster_f1,
+                'n': sm.n,
+                'valp': sm.value_precision,
+                'valr': sm.value_recall,
+                'valf': sm.value_f1,
+            }
+            scenario_results_path = scenario_dir/'old_evaluation_results.json'
+            scenario_results_path.write_text(json.dumps(old_eval_results, indent=2))
+            
+
+    # experiments = [
+    #     'old_t5_dot'
+    # ]
+    # for exp in experiments:
+    #     parent_dir = pl.Path('ex') / exp
+    #     scenario_files = [x for x in parent_dir.iterdir() if '_states_clustered.json' in x.name]
+    #     for scenario in tqdm(scenario_files, 'Mapping Scenarios'):
+    #         print()
+    #         print(scenario)
+    #         print()
+    #         data = dial.Dialogues.load(scenario)
+    #         gold_data = dial.dot2_to_dialogues('data/DOTS/eval_final_corrected/')
+
+    #         dialogues_by_scenario = {}
+    #         for dialogue in data:
+    #             dialogue: dial.Dialogue
+    #             domains = dialogue.id[:dialogue.id.find('/')]
+    #             dialogues_by_scenario.setdefault(domains, []).append(dialogue)
+    #         assert len(dialogues_by_scenario) == 1
+
+    #         gold_by_scenario = {}
+    #         for dialogue in gold_data:
+    #             dialogue: dial.Dialogue
+    #             domains = dialogue.id[:dialogue.id.find('/')]
+    #             gold_by_scenario.setdefault(domains, []).append(dialogue)
+
+    #         domain, predicted = list(dialogues_by_scenario.items())[0]
+    #         gold = gold_by_scenario[domain]
+    #         sm = SimMatcher()
+    #         sm.match_values(gold=gold, predicted=predicted)
+            
+    #         scenario_results_path = scenario.parent / f'{scenario.name.replace("_states_clustered.json", "")}_old_evaluation_mapping.json'
+    #         scenario_results_path.write_text(json.dumps({', '.join(k): ', '.join(v) if v is not None else None for k,v in sm.best_matches.items()}, indent=2))
 
 
 

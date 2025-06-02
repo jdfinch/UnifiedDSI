@@ -1,0 +1,218 @@
+Filtered out 0/16142 dialogues when loading SGD from data/sgd/train
+Filtered out 0/2482 dialogues when loading SGD from data/sgd/dev
+Filtered out 0/4201 dialogues when loading SGD from data/sgd/test
+
+Domains: 20
+Slots: 169
+
+{
+  "Restaurants": [
+    "restaurant_name",
+    "city",
+    "time",
+    "date",
+    "party_size",
+    "cuisine",
+    "price_range",
+    "has_live_music",
+    "serves_alcohol",
+    "location",
+    "number_of_seats",
+    "category",
+    "has_seating_outdoors",
+    "has_vegetarian_options"
+  ],
+  "Movies": [
+    "movie_name",
+    "number_of_tickets",
+    "show_date",
+    "location",
+    "show_time",
+    "show_type",
+    "genre",
+    "theater_name",
+    "starring",
+    "director",
+    "directed_by",
+    "cast"
+  ],
+  "Music": [
+    "genre",
+    "artist",
+    "album",
+    "song_name",
+    "playback_device",
+    "year",
+    "track",
+    "device"
+  ],
+  "Media": [
+    "genre",
+    "directed_by",
+    "title",
+    "subtitles",
+    "actors",
+    "director",
+    "movie_name",
+    "subtitle_language",
+    "starring"
+  ],
+  "RideSharing": [
+    "destination",
+    "number_of_seats",
+    "ride_type",
+    "number_of_riders",
+    "shared_ride"
+  ],
+  "Flights": [
+    "origin_city",
+    "destination_city",
+    "departure_date",
+    "airlines",
+    "refundable",
+    "passengers",
+    "seating_class",
+    "return_date",
+    "outbound_departure_time",
+    "inbound_departure_time",
+    "origin",
+    "destination",
+    "flight_class",
+    "number_checked_bags",
+    "origin_airport",
+    "destination_airport",
+    "number_of_tickets"
+  ],
+  "Hotels": [
+    "hotel_name",
+    "location",
+    "check_in_date",
+    "check_out_date",
+    "number_of_rooms",
+    "pets_welcome",
+    "number_of_days",
+    "destination",
+    "has_wifi",
+    "star_rating",
+    "where_to",
+    "number_of_adults",
+    "rating",
+    "has_laundry_service",
+    "place_name",
+    "stay_length",
+    "smoking_allowed"
+  ],
+  "Travel": [
+    "location",
+    "category",
+    "free_entry",
+    "good_for_kids"
+  ],
+  "Events": [
+    "event_type",
+    "city",
+    "date",
+    "category",
+    "event_name",
+    "number_of_tickets",
+    "city_of_event",
+    "subcategory",
+    "number_of_seats"
+  ],
+  "Buses": [
+    "origin",
+    "destination",
+    "departure_date",
+    "fare_type",
+    "group_size",
+    "departure_time",
+    "from_location",
+    "to_location",
+    "leaving_date",
+    "travelers",
+    "leaving_time",
+    "from_city",
+    "to_city",
+    "num_passengers",
+    "category",
+    "additional_luggage"
+  ],
+  "Homes": [
+    "area",
+    "number_of_beds",
+    "furnished",
+    "pets_allowed",
+    "number_of_baths",
+    "property_name",
+    "visit_date",
+    "intent",
+    "has_garage",
+    "in_unit_laundry"
+  ],
+  "Calendar": [
+    "event_date",
+    "event_name",
+    "event_location",
+    "event_time"
+  ],
+  "RentalCars": [
+    "pickup_city",
+    "pickup_date",
+    "pickup_time",
+    "dropoff_date",
+    "type",
+    "pickup_location",
+    "car_type",
+    "city",
+    "start_date",
+    "end_date",
+    "add_insurance"
+  ],
+  "Banks": [
+    "account_type",
+    "amount",
+    "recipient_account_name",
+    "recipient_account_type",
+    "transfer_amount",
+    "recipient_name"
+  ],
+  "Services": [
+    "dentist_name",
+    "appointment_time",
+    "appointment_date",
+    "city",
+    "offers_cosmetic_services",
+    "stylist_name",
+    "is_unisex",
+    "doctor_name",
+    "type",
+    "therapist_name"
+  ],
+  "Weather": [
+    "city",
+    "date"
+  ],
+  "Alarm": [
+    "new_alarm_time",
+    "new_alarm_name"
+  ],
+  "Messaging": [
+    "location",
+    "contact_name"
+  ],
+  "Trains": [
+    "from",
+    "to",
+    "date_of_journey",
+    "journey_start_time",
+    "number_of_adults",
+    "trip_protection",
+    "class"
+  ],
+  "Payment": [
+    "receiver",
+    "amount",
+    "private_visibility",
+    "payment_method"
+  ]
+}

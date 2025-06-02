@@ -1,0 +1,571 @@
+
+< INPUT >
+What is the slot schema covered by the dataset: Multi-Domain Wizard-of-Oz Dataset for Task-Oriented Dialogue Modeling (MultiWOZ2.4)? Please list all of the domains and their slots that are included in the train, validation, and test splits of MultiWOZ2.4 in the format "# DOMAIN\n* SLOT1\nSLOT 2\n..."
+
+
+-----------------------
+GPT-4o, Temperature 0.7
+-----------------------
+
+
+< OUTPUT >
+The MultiWOZ2.4 dataset is a commonly used benchmark for task-oriented dialogue systems, covering a variety of domains with specific slots for each domain. Here are the domains and their corresponding slots included in the dataset:
+
+### 1. Attraction
+* area
+* name
+* type
+
+### 2. Hotel
+* area
+* internet
+* name
+* parking
+* pricerange
+* stars
+* type
+* day
+* people
+* stay
+
+### 3. Restaurant
+* area
+* food
+* name
+* pricerange
+* day
+* people
+* time
+
+### 4. Taxi
+* arriveby
+* departure
+* destination
+* leaveat
+
+### 5. Train
+* arriveby
+* day
+* departure
+* destination
+* leaveat
+* people
+
+### 6. Hospital
+* department
+
+### 7. Police
+* None (No slots are typically associated with this domain in the dataset)
+
+### 8. Bus
+* arriveby
+* day
+* departure
+* destination
+* leaveat
+
+!! missing - bus - book people
+
+These domains and slots are distributed across the train, validation, and test splits of the MultiWOZ2.4 dataset. Each domain contains dialogues where these slots are filled with values as part of the dialogues between a user and the system, simulating real-world interactions for task-oriented dialogue modeling.
+
+< METRICS >
+Precision = 36 / 36 = 1.0
+Recall = 36 / 37 = 0.97297
+F1 = 0.9862998
+
+
+IGNORING BUS AND HOSPITAL
+
+< METRICS >
+Precision = 30 / 30 = 1.0
+Recall = 30 / 30 = 1.0
+F1 = 1.00
+
+
+-----------------------
+Claude-sonnet-3-5, Temperature 0.7
+-----------------------
+
+Here are all domains and their slots in MultiWOZ 2.4:
+RESTAURANT
+
+name
+area
+food
+pricerange
+book_day
+book_people
+book_time
+address
+phone
+postcode
+ref
+
+HOTEL
+
+name
+area
+parking
+pricerange
+stars
+internet
+type
+book_day
+book_people
+book_stay
+address
+phone
+postcode
+ref
+
+ATTRACTION
+
+name
+area
+type
+entrance fee
+address
+phone
+postcode
+
+TRAIN
+
+departure
+destination
+day
+book_people
+leaveat
+arriveby
+ref
+duration
+price
+
+TAXI
+
+departure
+destination
+leaveat
+arriveby
+phone
+
+BUS
+
+departure
+destination
+day
+leaveat
+arriveby
+
+HOSPITAL
+
+department
+address
+phone
+postcode
+
+POLICE
+
+name
+address
+phone
+postcode
+
+
+>>>>>>>>>>>>>>>> CHECKING CORRECTNESS BELOW
+
+
+
+
+
+
+Here are all domains and their slots in MultiWOZ 2.4:
+
+RESTAURANT
+
+name            Y
+area            Y
+food            Y
+pricerange      Y
+book_day        Y
+book_people     Y
+book_time       Y
+
+fine -> requestable slots
+address         N
+phone           N
+postcode        N
+ref             N
+
+HOTEL
+
+name            Y
+area            Y
+parking         Y
+pricerange      Y
+stars           Y
+internet        Y
+type            Y
+book_day        Y
+book_people     Y
+book_stay       Y
+
+fine -> requestable slots
+address         N 
+phone           N
+postcode        N
+ref             N
+
+ATTRACTION
+
+name            Y
+area            Y
+type            Y
+
+fine -> requestable slots
+entrance fee    N
+address         N
+phone           N
+postcode        N
+
+TRAIN
+
+departure       Y
+destination     Y
+day             Y
+book_people     Y
+leaveat         Y
+arriveby        Y
+
+fine -> requestable slots
+ref             N
+duration        N
+price           N
+
+TAXI
+
+departure       Y
+destination     Y
+leaveat         Y
+arriveby        Y
+
+fine -> requestable slots
+phone           N
+
+BUS
+
+departure       Y
+destination     Y
+day             Y
+leaveat         Y
+arriveby        Y
+                X    book people
+
+HOSPITAL
+
+department      Y
+
+fine -> requestable slots
+address         N
+phone           N
+postcode        N
+
+POLICE
+fine -> requestable slots
+name            N
+address         N
+phone           N
+postcode        N
+
+
+IGNORING BUS AND HOSPITAL AND POLICE
+
+< METRICS >
+Precision = 1.0
+Recall = 1.0
+F1 = 1.0
+
+
+-----------------------
+llama-3.1-8b-instruct, Temperature 0.7
+-----------------------
+
+What is the slot schema covered by the dataset: Multi-Domain Wizard-of-Oz Dataset for Task-Oriented Dialogue Modeling (MultiWOZ2.4)? Please list all of the domains and their slots that are included in MultiWOZ2.4 in the format "# DOMAIN\n* SLOT1\nSLOT 2\n..."
+
+The MultiWOZ2.4 dataset covers the following domains and slots:
+
+Attraction
+
+name
+address
+postcode
+opening_hours
+area
+
+Hospital
+
+name
+address
+postcode
+phone
+hospital_type
+
+Restaurant
+
+name
+address
+postcode
+cuisine
+price
+area
+phone
+food
+hours
+good_for
+reservation_policy
+
+Police
+
+name
+address
+postcode
+phone
+office_hours
+area
+
+Taxi
+
+name
+phone
+number_of_vehicles
+hours
+area
+
+Train
+
+name
+address
+postcode
+phone
+departure
+arrival
+hours
+schedule
+
+Hotel
+
+name
+address
+postcode
+phone
+price
+area
+stars
+wifi
+parking
+restaurant
+gym
+hotel_amenities
+hotel_services
+breakfast
+
+Note that some slots have been omitted or are not available for certain domains.
+
+
+
+>>>>>>>>> CALCULATING CORRECTNESS
+
+Attraction
+
+name            Y
+address         SKIP
+postcode        SKIP
+opening_hours   N
+area            Y
+                MISSING -- type
+
+Hospital -- SKIP
+
+name            
+address
+postcode
+phone
+hospital_type
+
+Restaurant
+
+name                Y
+address             SKIP
+postcode            SKIP
+cuisine             N (duplicate)
+price               Y
+area                Y
+phone               SKIP
+food                Y
+hours               N
+good_for            N
+reservation_policy  N
+                MISSING -- 
+                    book day, 
+                    book people, 
+                    book time
+
+Police -- SKIP
+
+name
+address
+postcode
+phone
+office_hours
+area
+
+Taxi
+
+name                N
+phone               SKIP
+number_of_vehicles  N
+hours               N
+area                N
+
+Train
+
+name                N
+address             SKIP
+postcode            SKIP
+phone               SKIP
+departure           Y
+arrival             Y
+hours               N
+schedule            N
+                    MISSING --
+                        arriveby
+                        leaveat
+                        book people
+                        day
+
+Hotel
+
+name                Y
+address             SKIP
+postcode            SKIP
+phone               SKIP
+price               Y
+area                Y
+stars               Y
+wifi                Y
+parking             Y
+restaurant          N
+gym                 N
+hotel_amenitie      N
+hotel_services      N
+breakfast           N
+                    MISSING
+                        book day
+                        book people
+                        book stay
+
+
+
+
+
+-----------------------
+llama-3.2-3b-instruct, Temperature 0.7
+-----------------------
+
+
+The Multi-Domain Wizard-of-Oz Dataset for Task-Oriented Dialogue Modeling (MultiWOZ2.4) covers 8 domains. Here is the list of domains and their slots:
+
+Domain: Address
+
+street
+city
+postcode
+
+Domain: Bank
+
+bank_name
+account_number
+account_type
+currency
+
+Domain: Book
+
+book_title
+author
+publisher
+publication_date
+
+Domain: Doctor
+
+doctor_name
+medical_specialisation
+hospital_name
+appointment_date
+
+
+
+Domain: Hotel
+
+hotel_name
+address
+checkin_date
+checkout_date
+
+Domain: Restaurant
+
+restaurant_name
+address
+cuisine
+phone_number
+
+
+
+
+Domain: Real Estate
+
+property_type
+address
+
+Domain: Taxation
+
+tax_year
+tax_type
+amount
+
+
+
+< METRICS >
+Precision = 5 / 20 = 0.25
+Recall = 5 / 30 = 0.1667
+F1 = 0.200
+
+
+
+
+
+IGNORING BUS AND HOSPITAL AND POLICE
+
+GPT-4o
+
+Precision = 30 / 30 = 1.0
+Recall = 30 / 30 = 1.0
+F1 = 1.00
+
+
+Claude Sonnet 3.5
+
+Precision = 30 / 30 = 1.0
+Recall = 30 / 30 = 1.0
+F1 = 1.00
+
+
+Llama3.1-8b-instruct
+
+Precision =  14 / 31 = 0.4516
+Recall =  14 / 30 = 0.466667
+F1 = 0.4590  
+
+Llama3.2-3b-instruct
+
+Precision = 5 / 20 = 0.25
+Recall = 5 / 30 = 0.1667
+F1 = 0.200

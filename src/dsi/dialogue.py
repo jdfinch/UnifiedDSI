@@ -556,17 +556,24 @@ def reparse_descriptions(data_dir):
 
 if __name__ == '__main__':
 
+
     # dialogues = multiwoz_to_dialogues('data/multiwoz24/original/dev_dials.json')
     # dialogues[0].display_text()
     # dialogues[0].display_states()
 
-    # dialogues = dot2_to_dialogues('data/d0t/dot_2')
+    dialogues = dot2_to_dialogues('data/DOTS/train')
+    dialogue, = (d for d in dialogues if any(
+        "The Peony is a pink flowering plant, grows about 0.8 meters tall, thrives in full sun, and requires medium water."
+        in t for t in d.turns))
+    dialogue.display_state_updates()
+    dialogue.display_final_schema()
+
     # dialogues.analysis_missing_descriptions()
     # dialogues[241].display_text()
     # dialogues[0].display_final_schema()
 
-    sgd_valid = sgd_to_dialogues('data/sgd/train', filter_out_domains=())
-    sgd_valid.save('data/sgd/noise.json')
+    # sgd_valid = sgd_to_dialogues('data/sgd/train', filter_out_domains=())
+    # sgd_valid.save('data/sgd/noise.json')
 
     # predictions = Dialogues.load('ex/DashingZuckuss_tebu/0/dsi_dial_schema_stream.json')
     # example = rng.choice(predictions)
