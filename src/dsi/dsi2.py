@@ -1423,7 +1423,7 @@ if __name__ == '__main__':
         experiment_name=f'{modelac}_{suffix}_{data}',
         model_to_load=f"ex/{modelname}/30000",
         base_model_repo_id='meta-llama/Llama-3.1-8B-Instruct',
-        **mode_dc, # <- inference settings
+        **mode_ds, # <- inference settings
         infer_revisions=False,
         infer_bad_slots_by_tracked_counts=False,
         infer_bad_slots_by_min_count_per_dialogue_window=None,
@@ -1451,8 +1451,8 @@ if __name__ == '__main__':
     )
 
     # dial.dot2_to_dialogues(evaluation_experiment.eval_data_path)
-    # evaluation_experiment.run()
-    launch(evaluation_experiment)
+    evaluation_experiment.run()
+    # launch(evaluation_experiment)
 
     del evaluation_experiment
     gc.collect()
